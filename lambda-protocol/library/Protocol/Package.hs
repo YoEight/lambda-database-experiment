@@ -17,9 +17,10 @@ module Protocol.Package where
 import ClassyPrelude
 import Data.Serialize
 import Data.UUID
+import Data.UUID.V4
 
 --------------------------------------------------------------------------------
-newtype Cmd = Cmd Word8 deriving (Eq, Ord, Enum, Show)
+newtype Cmd = Cmd Word8 deriving (Eq, Ord, Enum, Num, Show)
 
 --------------------------------------------------------------------------------
 instance Serialize Cmd where
@@ -28,6 +29,10 @@ instance Serialize Cmd where
 
 --------------------------------------------------------------------------------
 newtype PkgId = PkgId UUID deriving (Eq, Ord, Show)
+
+--------------------------------------------------------------------------------
+freshPkgId :: IO PkgId
+freshPkgId = PkgId <$> nextRandom
 
 --------------------------------------------------------------------------------
 instance Serialize PkgId where
