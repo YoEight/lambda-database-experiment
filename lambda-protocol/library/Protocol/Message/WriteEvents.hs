@@ -1,6 +1,6 @@
-
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DataKinds     #-}
+{-# LANGUAGE DeriveGeneric   #-}
+{-# LANGUAGE DataKinds       #-}
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Protocol.Message.WriteEvents
@@ -15,6 +15,7 @@
 module Protocol.Message.WriteEvents
   ( Result(..)
   , createPackage
+  , parseOperation
   ) where
 
 --------------------------------------------------------------------------------
@@ -22,10 +23,12 @@ import Data.List.NonEmpty hiding (toList)
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.ProtocolBuffers hiding (encode)
+import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize hiding (Result)
+import Data.UUID
 
 --------------------------------------------------------------------------------
+import Protocol.Operation
 import Protocol.Package
 import Protocol.Types
 
@@ -39,6 +42,7 @@ data EventMsg =
 
 --------------------------------------------------------------------------------
 instance Encode EventMsg
+instance Decode EventMsg
 
 --------------------------------------------------------------------------------
 data Result = Success
@@ -54,6 +58,7 @@ data WriteReq =
 
 --------------------------------------------------------------------------------
 instance Encode WriteReq
+instance Decode WriteReq
 
 --------------------------------------------------------------------------------
 data WriteResp =
@@ -72,10 +77,17 @@ verInt32 StreamExists       = 0
 verInt32 (ExactVersion num) = let EventNumber n = num in n
 
 --------------------------------------------------------------------------------
+int32ver :: Int32 -> ExpectedVersion
+int32ver (-2) = AnyVersion
+int32ver (-1) = NoStream
+int32ver 0    = StreamExists
+int32ver n    = ExactVersion $ EventNumber n
+
+--------------------------------------------------------------------------------
 createPackage :: StreamName -> ExpectedVersion -> NonEmpty Event -> IO Pkg
 createPackage name ver xs = do
   pid <- freshPkgId
-  return Pkg { pkgCmd     = 0x02
+  return Pkg { pkgCmd      = 0x02
               , pkgId      = pid
               , pkgPayload = runPut $ encodeMessage req
               }
@@ -91,3 +103,38 @@ createPackage name ver xs = do
                , msgData     = putField $ dataBytes $ eventPayload e
                , msgMetadata = putField $ fmap encode $ eventMetadata e
                }
+
+--------------------------------------------------------------------------------
+parseOperation :: MonadPlus m => Pkg -> m Operation
+parseOperation Pkg{..} =
+  case pkgCmd of
+    0x02 ->
+      case runGet decodeMessage pkgPayload of
+        Right r -> do
+          let name = StreamName $ getField $ writeStreamId r
+              ver  = int32ver $ getField $ writeExpectedVersion r
+              xs   = getField $ writeMsgs r
+
+              toEvt msg = do
+                eid <- case fromByteString $ fromStrict $ getField $ msgId msg of
+                         Just uuid -> return $ EventId uuid
+                         _         -> mzero
+
+                let dat = getField $ msgMetadata msg
+                return Event { eventId       = eid
+                             , eventType     = EventType $ getField $ msgType msg
+                             , eventPayload  = Data $ getField $ msgData msg
+                             , eventMetadata = eitherMaybe . decode =<< dat
+                             }
+
+          evts     <- traverse toEvt xs
+          safeEvts <- maybe mzero return $ nonEmpty evts
+
+          return $ WriteEvents name ver safeEvts
+        _ -> mzero
+    _ -> mzero
+
+--------------------------------------------------------------------------------
+eitherMaybe :: Either e a -> Maybe a
+eitherMaybe (Right a) = Just a
+eitherMaybe _         = Nothing
