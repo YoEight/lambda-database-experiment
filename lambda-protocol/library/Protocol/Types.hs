@@ -88,6 +88,10 @@ properties (Properties m) = mapToList m
 newtype EventId = EventId UUID deriving (Eq, Ord)
 
 --------------------------------------------------------------------------------
+eventIdBytes :: EventId -> ByteString
+eventIdBytes (EventId uuid) = toStrict $ toByteString uuid
+
+--------------------------------------------------------------------------------
 instance Show EventId where
   show (EventId uuid) = show uuid
 
@@ -180,4 +184,10 @@ startFrom from = Batch from 500
 data WriteResultFlag
   = WriteSuccess
   | WriteWrongExpectedVersion
+  deriving (Eq, Enum, Show)
+
+--------------------------------------------------------------------------------
+data ReadResultFlag
+  = ReadSuccess
+  | ReadNoStream
   deriving (Eq, Enum, Show)
