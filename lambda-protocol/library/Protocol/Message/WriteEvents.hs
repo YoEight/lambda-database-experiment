@@ -13,9 +13,10 @@
 --
 --------------------------------------------------------------------------------
 module Protocol.Message.WriteEvents
-  ( Result(..)
-  , createPackage
-  , parseOperation
+  ( createPkg
+  , createRespPkg
+  , parseOp
+  , parseResp
   ) where
 
 --------------------------------------------------------------------------------
@@ -45,11 +46,6 @@ instance Encode EventMsg
 instance Decode EventMsg
 
 --------------------------------------------------------------------------------
-data Result = Success
-            | WrongExpectedVersion
-            deriving (Eq, Enum, Show)
-
---------------------------------------------------------------------------------
 data WriteReq =
   WriteReq { writeStreamId        :: Required 1 (Value Text)
            , writeExpectedVersion :: Required 2 (Value Int32)
@@ -62,11 +58,12 @@ instance Decode WriteReq
 
 --------------------------------------------------------------------------------
 data WriteResp =
-  WriteResp { writeResult     :: Required 1 (Enumeration Result)
+  WriteResp { writeResult     :: Required 1 (Enumeration WriteResultFlag)
             , writeNextNumber :: Required 2 (Value Int32)
             } deriving (Generic, Show)
 
 --------------------------------------------------------------------------------
+instance Encode WriteResp
 instance Decode WriteResp
 
 --------------------------------------------------------------------------------
@@ -84,10 +81,10 @@ int32ver 0    = StreamExists
 int32ver n    = ExactVersion $ EventNumber n
 
 --------------------------------------------------------------------------------
-createPackage :: StreamName -> ExpectedVersion -> NonEmpty Event -> IO Pkg
-createPackage name ver xs = do
+createPkg :: StreamName -> ExpectedVersion -> NonEmpty Event -> IO Pkg
+createPkg name ver xs = do
   pid <- freshPkgId
-  return Pkg { pkgCmd      = 0x02
+  return Pkg {  pkgCmd     = 0x02
               , pkgId      = pid
               , pkgPayload = runPut $ encodeMessage req
               }
@@ -105,8 +102,21 @@ createPackage name ver xs = do
                }
 
 --------------------------------------------------------------------------------
-parseOperation :: MonadPlus m => Pkg -> m Operation
-parseOperation Pkg{..} =
+createRespPkg :: EventNumber -> WriteResultFlag -> IO Pkg
+createRespPkg (EventNumber n) flag = do
+  pid <- freshPkgId
+  return Pkg { pkgCmd     = 0x03
+             , pkgId      = pid
+             , pkgPayload = runPut $ encodeMessage resp
+             }
+  where
+    resp = WriteResp { writeResult     = putField flag
+                     , writeNextNumber = putField n
+                     }
+
+--------------------------------------------------------------------------------
+parseOp :: MonadPlus m => Pkg -> m Operation
+parseOp Pkg{..} =
   case pkgCmd of
     0x02 ->
       case runGet decodeMessage pkgPayload of
@@ -131,6 +141,19 @@ parseOperation Pkg{..} =
           safeEvts <- maybe mzero return $ nonEmpty evts
 
           return $ WriteEvents name ver safeEvts
+        _ -> mzero
+    _ -> mzero
+
+--------------------------------------------------------------------------------
+parseResp :: MonadPlus m => Pkg -> m Response
+parseResp Pkg{..} =
+  case pkgCmd of
+    0x03 ->
+      case runGet decodeMessage pkgPayload of
+        Right r -> do
+          let flag = getField $ writeResult r
+              nxt  = EventNumber $ getField $ writeNextNumber r
+          return $ WriteEventsResp nxt flag
         _ -> mzero
     _ -> mzero
 

@@ -21,3 +21,7 @@ import Protocol.Types
 data Operation
   = WriteEvents StreamName ExpectedVersion (NonEmpty Event)
   | ReadEvents StreamName Batch
+
+--------------------------------------------------------------------------------
+data Response
+  = WriteEventsResp EventNumber WriteResultFlag

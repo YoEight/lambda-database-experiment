@@ -175,3 +175,9 @@ data Batch =
 --   which is 500.
 startFrom :: EventNumber -> Batch
 startFrom from = Batch from 500
+
+--------------------------------------------------------------------------------
+data WriteResultFlag
+  = WriteSuccess
+  | WriteWrongExpectedVersion
+  deriving (Eq, Enum, Show)
