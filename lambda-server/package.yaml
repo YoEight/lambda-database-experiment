@@ -44,6 +44,7 @@ library:
     - connection
     - network
     - uuid
+    - cereal
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

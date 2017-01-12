@@ -10,14 +10,38 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Server.Connection where
+module Server.Connection
+  ( ConnectionSettings(..)
+  , ServerConnection
+  , ConnectionException(..)
+  , ClientId
+  , ClientConnection
+  , newServerConnection
+  , awaitClientConnection
+  , recv
+  , send
+  ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
 import Network
 import Network.Connection
+
+--------------------------------------------------------------------------------
+import Protocol.Package
+
+--------------------------------------------------------------------------------
+data ConnectionException
+  = MaxAttemptConnectionReached
+  | WrongPackageFraming
+  | PackageParsingError Text
+  deriving (Show, Typeable)
+
+--------------------------------------------------------------------------------
+instance Exception ConnectionException
 
 --------------------------------------------------------------------------------
 data ConnectionSettings =
@@ -60,3 +84,19 @@ awaitClientConnection ServerConnection{..} =
                               , connectionUseSecure = Nothing
                               , connectionUseSocks  = Nothing
                               }
+
+--------------------------------------------------------------------------------
+recv :: ClientConnection -> IO Pkg
+recv ClientConnection{..} = do
+  prefixBytes <- connectionGetExact innerConn 4
+  case decode prefixBytes of
+    Left _    -> throwIO WrongPackageFraming
+    Right len -> do
+      payload <- connectionGetExact innerConn len
+      case decode payload of
+        Left e    -> throwIO $ PackageParsingError $ pack e
+        Right pkg -> return pkg
+
+--------------------------------------------------------------------------------
+send :: ClientConnection -> Pkg -> IO ()
+send ClientConnection{..} pkg = connectionPut innerConn $ encode pkg
