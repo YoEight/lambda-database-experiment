@@ -17,9 +17,13 @@ category: Other
 description: lambda-server is a new Haskeleton package.
 executables:
   lambda-server:
+    default-extensions:
+      - NoImplicitPrelude
     dependencies:
     - base
     - lambda-server
+    - optparse-applicative
+    - classy-prelude
     ghc-options:
     - -rtsopts
     - -threaded

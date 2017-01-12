@@ -16,6 +16,7 @@ module Server.Connection
   , ConnectionException(..)
   , ClientId
   , ClientConnection
+  , PortNumber
   , newServerConnection
   , awaitClientConnection
   , recv
@@ -45,7 +46,9 @@ instance Exception ConnectionException
 
 --------------------------------------------------------------------------------
 data ConnectionSettings =
-  ConnectionSettings { portNumber :: PortNumber }
+  ConnectionSettings { portNumber :: PortNumber
+                     , hostname   :: String
+                     }
 
 --------------------------------------------------------------------------------
 data ServerConnection =
@@ -79,7 +82,7 @@ awaitClientConnection ServerConnection{..} =
   ClientConnection <$> freshClientId
                    <*> connectFromSocket serverCtx sock params
   where
-    params = ConnectionParams { connectionHostname  = "localhost"
+    params = ConnectionParams { connectionHostname  = hostname connSettings
                               , connectionPort      = portNumber connSettings
                               , connectionUseSecure = Nothing
                               , connectionUseSocks  = Nothing
