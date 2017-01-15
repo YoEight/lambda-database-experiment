@@ -15,7 +15,7 @@ module Server.Connection
   , ServerConnection
   , ConnectionException(..)
   , ClientId
-  , ClientConnection
+  , ClientConnection(..)
   , PortNumber
   , newServerConnection
   , awaitClientConnection
@@ -24,12 +24,13 @@ module Server.Connection
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-import Data.Serialize
-import Data.UUID
-import Data.UUID.V4
-import Network
-import Network.Connection
+import           ClassyPrelude
+import qualified Data.ByteString as B
+import           Data.Serialize
+import           Data.UUID
+import           Data.UUID.V4
+import           Network
+import           Network.Connection
 
 --------------------------------------------------------------------------------
 import Protocol.Package
@@ -53,15 +54,13 @@ data ConnectionSettings =
 --------------------------------------------------------------------------------
 data ServerConnection =
   ServerConnection { connSettings :: ConnectionSettings
-                   , serverCtx    :: ConnectionContext
                    , sock         :: Socket
                    }
 
 --------------------------------------------------------------------------------
 newServerConnection :: ConnectionSettings -> IO ServerConnection
 newServerConnection cs@ConnectionSettings{..} =
-  ServerConnection cs <$> initConnectionContext
-                      <*> listenOn (PortNumber portNumber)
+  withSocketsDo (ServerConnection cs <$> listenOn (PortNumber portNumber))
 
 --------------------------------------------------------------------------------
 newtype ClientId = ClientId UUID deriving (Eq, Ord, Show)
@@ -73,33 +72,31 @@ freshClientId = ClientId <$> nextRandom
 --------------------------------------------------------------------------------
 data ClientConnection =
   ClientConnection { clientId :: ClientId
-                   , innerConn :: Connection
+                   , innerConn :: Handle
                    }
 
 --------------------------------------------------------------------------------
 awaitClientConnection :: ServerConnection -> IO ClientConnection
 awaitClientConnection ServerConnection{..} =
   ClientConnection <$> freshClientId
-                   <*> connectFromSocket serverCtx sock params
+                   <*> getHandle
   where
-    params = ConnectionParams { connectionHostname  = hostname connSettings
-                              , connectionPort      = portNumber connSettings
-                              , connectionUseSecure = Nothing
-                              , connectionUseSocks  = Nothing
-                              }
+    getHandle = do
+      (handle, _, _) <- accept sock
+      return handle
 
 --------------------------------------------------------------------------------
 recv :: ClientConnection -> IO Pkg
 recv ClientConnection{..} = do
-  prefixBytes <- connectionGetExact innerConn 4
+  prefixBytes <- B.hGet innerConn 4
   case decode prefixBytes of
     Left _    -> throwIO WrongPackageFraming
     Right len -> do
-      payload <- connectionGetExact innerConn len
+      payload <- B.hGet innerConn len
       case decode payload of
         Left e    -> throwIO $ PackageParsingError $ pack e
         Right pkg -> return pkg
 
 --------------------------------------------------------------------------------
 send :: ClientConnection -> Pkg -> IO ()
-send ClientConnection{..} pkg = connectionPut innerConn $ encode pkg
+send ClientConnection{..} pkg = B.hPut innerConn $ encode pkg

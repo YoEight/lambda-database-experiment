@@ -19,6 +19,7 @@ import Options.Applicative
 
 --------------------------------------------------------------------------------
 import Server.Connection
+import Server.Exec
 
 --------------------------------------------------------------------------------
 data Run =
@@ -73,4 +74,4 @@ main = execParser cmdParser >>= executeCmd
 
 --------------------------------------------------------------------------------
 executeCmd :: Run -> IO ()
-executeCmd _ = return ()
+executeCmd run = exec (runConnSettings run)

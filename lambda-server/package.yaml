@@ -41,12 +41,14 @@ github: YoEight/lambda-server
 library:
   default-extensions:
     - NoImplicitPrelude
+    - OverloadedStrings
   dependencies:
     - base
     - classy-prelude
     - lambda-protocol
     - connection
     - network
+    - bytestring
     - uuid
     - cereal
   source-dirs: library
