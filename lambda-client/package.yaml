@@ -36,7 +36,12 @@ ghc-options: -Wall
 github: YoEight/lambda-client
 library:
   dependencies:
-  - base
+    - base
+    - lambda-protocol
+    - connection
+    - classy-prelude
+    - uuid
+    - cereal
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
