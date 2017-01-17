@@ -27,15 +27,18 @@ import Data.Bifoldable
 import Protocol.Package
 
 --------------------------------------------------------------------------------
+import LDE.Internal.Command
 import LDE.Internal.Connection
 import LDE.Internal.CyclicQueue
 import LDE.Internal.Handler
+import LDE.Internal.Processor
 import LDE.Internal.Settings
 
 --------------------------------------------------------------------------------
 data Msg
   = Recv Pkg
   | Stopped SomeException
+  | Submit Command
 
 --------------------------------------------------------------------------------
 data Exec =
@@ -58,6 +61,8 @@ newtype Job = Job { runJob :: IO () }
 data Env =
   Env { _setts    :: Settings
       , _connVar  :: TVar InternalConnection
+      , _stateRef :: IORef ManagerState
+      , _proc     :: Proc
       , _msgQueue :: CyclicQueue Msg
       , _jobQueue :: CyclicQueue Job
       , _pkgQueue :: CyclicQueue Pkg
@@ -79,6 +84,8 @@ data ActorType
 newEnv :: Settings -> IO Env
 newEnv setts =
   Env setts <$> (newConnection setts >>= newTVarIO)
+            <*> newIORef initManagerState
+            <*> newProc
             <*> newCQ
             <*> newCQ
             <*> newCQ
@@ -119,24 +126,31 @@ newExec setts = do
 
 --------------------------------------------------------------------------------
 -- | Spawns a new thread worker.
-spawn :: Env -> ActorType -> IO Actor
+spawn :: Env -> ActorType -> IO ()
 spawn Env{..} tpe = do
-    conn <- readTVarIO _connVar
+  conn <- readTVarIO _connVar
 
-    let action =
+  let action =
+        case tpe of
+          ReceiverActor -> receiver _msgQueue conn
+          RunnerActor   -> runner _jobQueue
+          WriterActor   -> writer _pkgQueue conn
+
+  tid <- forkFinally action $ \outcome ->
+    case outcome of
+      Left e ->
+        case asyncExceptionFromException e of
+          Just ThreadKilled -> return ()
+          _ -> atomically $ writeCQ _msgQueue (Stopped e)
+
+  atomicModifyIORef' _stateRef $ \s ->
+    let act = Actor tid tpe
+        s'  =
           case tpe of
-            ReceiverActor -> receiver _msgQueue conn
-            RunnerActor   -> runner _jobQueue
-            WriterActor   -> writer _pkgQueue conn
-
-    tid <- forkFinally action $ \outcome ->
-      case outcome of
-        Left e ->
-          case asyncExceptionFromException e of
-            Just ThreadKilled -> return ()
-            _ -> atomically $ writeCQ _msgQueue (Stopped e)
-
-    return $ Actor tid tpe
+            ReceiverActor -> s { receiverAct = Just act }
+            RunnerActor   -> s { runnerAct   = Just act }
+            WriterActor   -> s { writerAct   = Just act } in
+    (s', ())
 
 --------------------------------------------------------------------------------
 receiver :: CyclicQueue Msg -> InternalConnection -> IO ()
@@ -151,11 +165,49 @@ runner jobQueue = forever $ do
   runJob j
 
 --------------------------------------------------------------------------------
-writer :: CyclicQueue Pkg-> InternalConnection -> IO ()
+writer :: CyclicQueue Pkg -> InternalConnection -> IO ()
 writer pkgQueue conn = forever $ do
   pkg <- atomically $ readCQ pkgQueue
   connSend conn pkg
 
 --------------------------------------------------------------------------------
+data ManagerState =
+  ManagerState { receiverAct :: Maybe Actor
+               , writerAct   :: Maybe Actor
+               , runnerAct   :: Maybe Actor
+               }
+
+--------------------------------------------------------------------------------
+initManagerState :: ManagerState
+initManagerState =
+  ManagerState { receiverAct = Nothing
+               , writerAct   = Nothing
+               , runnerAct   = Nothing
+               }
+
+--------------------------------------------------------------------------------
 bootstrap :: Env -> IO ()
-bootstrap _ = return ()
+bootstrap env = do
+  spawn env ReceiverActor
+  spawn env RunnerActor
+  spawn env WriterActor
+
+  cruising env
+
+--------------------------------------------------------------------------------
+cruising :: Env -> IO ()
+cruising env@Env{..} = forever $ do
+  msg <- atomically $ readCQ _msgQueue
+
+  case msg of
+    Stopped e  -> throwIO e
+    Recv pkg   -> submitPkg _proc pkg >>= introspect env
+    Submit cmd -> submitCmd _proc cmd >>= introspect env
+
+--------------------------------------------------------------------------------
+introspect :: Env -> Decision -> IO ()
+introspect Env{..} decision =
+  case decision of
+    SendPkg pkg -> atomically $ writeCQ _pkgQueue pkg
+    Run action  -> atomically $ writeCQ _jobQueue $ Job action
+    Noop        -> return ()
