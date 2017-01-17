@@ -44,6 +44,7 @@ library:
     - classy-prelude
     - uuid
     - cereal
+    - bifunctors
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
