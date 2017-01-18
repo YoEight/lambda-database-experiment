@@ -43,4 +43,7 @@ submitCmd = undefined
 
 --------------------------------------------------------------------------------
 submitPkg :: Proc -> Pkg -> IO Decision
-submitPkg = undefined
+submitPkg _ pkg =
+  case pkgCmd pkg of
+    0x01 -> return $ SendPkg $ heartbeatResponse (pkgId pkg)
+    _    -> return Noop

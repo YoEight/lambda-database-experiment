@@ -75,3 +75,20 @@ instance Serialize Pkg where
     Pkg <$> get
         <*> get
         <*> (remaining >>= getBytes)
+
+--------------------------------------------------------------------------------
+heartbeatRequest :: IO Pkg
+heartbeatRequest = do
+  pid <- freshPkgId
+  return Pkg { pkgCmd     = 0x01
+             , pkgId      = pid
+             , pkgPayload = mempty
+             }
+
+--------------------------------------------------------------------------------
+heartbeatResponse :: PkgId -> Pkg
+heartbeatResponse pid =
+  Pkg { pkgCmd     = 0x02
+      , pkgId      = pid
+      , pkgPayload = mempty
+      }
