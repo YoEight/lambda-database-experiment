@@ -81,13 +81,12 @@ int32ver 0    = StreamExists
 int32ver n    = ExactVersion $ EventNumber n
 
 --------------------------------------------------------------------------------
-createPkg :: StreamName -> ExpectedVersion -> NonEmpty Event -> IO Pkg
-createPkg name ver xs = do
-  pid <- freshPkgId
-  return Pkg {  pkgCmd     = 0x02
-              , pkgId      = pid
-              , pkgPayload = runPut $ encodeMessage req
-              }
+createPkg :: PkgId -> StreamName -> ExpectedVersion -> NonEmpty Event -> Pkg
+createPkg pid name ver xs =
+  Pkg { pkgCmd     = 0x02
+      , pkgId      = pid
+      , pkgPayload = runPut $ encodeMessage req
+      }
   where
     req = WriteReq { writeStreamId = putField $ streamName name
                    , writeExpectedVersion = putField $ verInt32 ver
@@ -102,13 +101,12 @@ createPkg name ver xs = do
                }
 
 --------------------------------------------------------------------------------
-createRespPkg :: EventNumber -> WriteResultFlag -> IO Pkg
-createRespPkg (EventNumber n) flag = do
-  pid <- freshPkgId
-  return Pkg { pkgCmd     = 0x03
-             , pkgId      = pid
-             , pkgPayload = runPut $ encodeMessage resp
-             }
+createRespPkg :: PkgId -> EventNumber -> WriteResultFlag -> Pkg
+createRespPkg pid (EventNumber n) flag =
+  Pkg { pkgCmd     = 0x03
+      , pkgId      = pid
+      , pkgPayload = runPut $ encodeMessage resp
+      }
   where
     resp = WriteResp { writeResult     = putField flag
                      , writeNextNumber = putField n
@@ -140,7 +138,7 @@ parseOp Pkg{..} =
           evts     <- traverse toEvt xs
           safeEvts <- maybe mzero return $ nonEmpty evts
 
-          return $ WriteEvents name ver safeEvts
+          return $ Operation pkgId $ WriteEvents name ver safeEvts
         _ -> mzero
     _ -> mzero
 
@@ -153,7 +151,7 @@ parseResp Pkg{..} =
         Right r -> do
           let flag = getField $ writeResult r
               nxt  = EventNumber $ getField $ writeNextNumber r
-          return $ WriteEventsResp nxt flag
+          return $ Response pkgId $ WriteEventsResp nxt flag
         _ -> mzero
     _ -> mzero
 

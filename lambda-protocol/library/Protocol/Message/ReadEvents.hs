@@ -1,5 +1,6 @@
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DataKinds     #-}
+{-# LANGUAGE DeriveGeneric   #-}
+{-# LANGUAGE DataKinds       #-}
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Protocol.Message.ReadEvents
@@ -14,6 +15,8 @@
 module Protocol.Message.ReadEvents
   ( createPkg
   , createRespPkg
+  , parseOp
+  , parseResp
   ) where
 
 --------------------------------------------------------------------------------
@@ -39,6 +42,7 @@ data ReadReq =
 
 --------------------------------------------------------------------------------
 instance Encode ReadReq
+instance Decode ReadReq
 
 --------------------------------------------------------------------------------
 data ReadResp =
@@ -46,6 +50,7 @@ data ReadResp =
            , readResult      :: Required 2 (Enumeration ReadResultFlag)
            , readNextNumber  :: Required 3 (Value Int32)
            , readEndOfStream :: Required 4 (Value Bool)
+           , readRespStream  :: Required 5 (Value Text)
            } deriving  (Generic, Show)
 
 --------------------------------------------------------------------------------
@@ -53,13 +58,12 @@ instance Decode ReadResp
 instance Encode ReadResp
 
 --------------------------------------------------------------------------------
-createPkg :: StreamName -> Batch -> IO Pkg
-createPkg (StreamName name) (Batch (EventNumber start) size) = do
-  pid <- freshPkgId
-  return Pkg { pkgCmd     = 0x04
-             , pkgId      = pid
-             , pkgPayload = runPut $ encodeMessage req
-             }
+createPkg :: PkgId -> StreamName -> Batch -> Pkg
+createPkg pid (StreamName name) (Batch (EventNumber start) size) =
+  Pkg { pkgCmd     = 0x04
+      , pkgId      = pid
+      , pkgPayload = runPut $ encodeMessage req
+      }
   where
     req = ReadReq { readStreamId  = putField name
                   , readStartNum  = putField start
@@ -84,4 +88,40 @@ createRespPkg pid name xs flag (EventNumber num) eos =
                     , readNextNumber  = putField num
                     , readEndOfStream = putField eos
                     , readEvents      = putField $ fmap (toEventRecord name) xs
+                    , readRespStream  = putField $ streamName name
                     }
+
+--------------------------------------------------------------------------------
+parseOp :: MonadPlus m => Pkg -> m Operation
+parseOp Pkg{..} =
+  case pkgCmd of
+    0x04 ->
+      case runGet decodeMessage pkgPayload of
+        Right r -> do
+          let streamName = StreamName $ getField $ readStreamId r
+              startNum   = EventNumber $ getField $ readStartNum r
+              batchSize  = getField $ readBatchSize r
+
+          return $ Operation pkgId
+                 $ ReadEvents streamName (Batch startNum batchSize)
+        _ -> mzero
+    _ -> mzero
+
+--------------------------------------------------------------------------------
+parseResp :: MonadPlus m => Pkg -> m Response
+parseResp Pkg{..} =
+  case pkgCmd of
+    0x05 ->
+      case runGet decodeMessage pkgPayload of
+        Right r -> do
+          let flag    = getField $ readResult r
+              nextNum = EventNumber $ getField $ readNextNumber r
+              eos     = getField $ readEndOfStream r
+              name    = StreamName $ getField $ readRespStream r
+
+          xs <- traverse fromEventRecord $ getField $ readEvents r
+
+          return $ Response pkgId
+                 $ ReadEventsResp name xs flag nextNum eos
+        _ -> mzero
+    _ -> mzero
