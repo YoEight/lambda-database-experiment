@@ -45,11 +45,11 @@ createRespPkg Response{..} =
       ReadEvents.createRespPkg responseId name xs flag num eos
 
 --------------------------------------------------------------------------------
-parseOp :: MonadPlus m => Pkg -> m Operation
+parseOp :: Pkg -> Maybe Operation
 parseOp pkg =
   WriteEvents.parseOp pkg <|> ReadEvents.parseOp pkg
 
 --------------------------------------------------------------------------------
-parseResp :: MonadPlus m => Pkg -> m Response
+parseResp :: Pkg -> Maybe Response
 parseResp pkg =
   WriteEvents.parseResp pkg <|> ReadEvents.parseResp pkg

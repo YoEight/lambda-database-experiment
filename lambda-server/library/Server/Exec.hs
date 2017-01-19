@@ -14,20 +14,23 @@ module Server.Exec (exec) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Protocol.Message
 import Protocol.Package
 
 --------------------------------------------------------------------------------
 import Server.Connection
+import Server.Operation
 import Server.Settings
 import Server.Timer
 
 --------------------------------------------------------------------------------
 exec :: Settings -> IO ()
 exec setts = do
-  conn <- newServerConnection $ connectionSettings setts
+  conn   <- newServerConnection $ connectionSettings setts
+  opExec <- newOperationExec setts
   forever $ do
     client <- awaitClientConnection conn
-    env    <- newEnv setts client
+    env    <- newEnv setts opExec client
 
     spawn env ReceiverActor
     spawn env WriterActor
@@ -38,6 +41,7 @@ exec setts = do
 --------------------------------------------------------------------------------
 data Env =
   Env { _conn     :: ClientConnection
+      , _opExec   :: OperationExec
       , _setts    :: Settings
       , _msgNum   :: IORef Integer
       , _msgQueue :: TQueue Msg
@@ -45,11 +49,11 @@ data Env =
       }
 
 --------------------------------------------------------------------------------
-newEnv :: Settings -> ClientConnection -> IO Env
-newEnv setts conn =
-  Env conn setts <$> newIORef 0
-                 <*> newTQueueIO
-                 <*> newTQueueIO
+newEnv :: Settings -> OperationExec -> ClientConnection -> IO Env
+newEnv setts opExec conn =
+  Env conn opExec setts <$> newIORef 0
+                        <*> newTQueueIO
+                        <*> newTQueueIO
 
 --------------------------------------------------------------------------------
 data Msg
@@ -111,6 +115,16 @@ exchange env@Env{..} = forever $ do
   case msg of
     Recv pkg -> do
       incrMsgNum env
+
+      for_ (parseOp pkg) $ \op -> do
+        outcome <- executeOperation _opExec op
+
+        case outcome of
+          OpSend opPkg ->
+            atomically $ writeTQueue _pkgQueue opPkg
+
+          OpNoop ->
+            return ()
 
     Heartbeat num -> do
       cur <- readIORef _msgNum
