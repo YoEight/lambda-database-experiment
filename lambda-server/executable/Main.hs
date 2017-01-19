@@ -20,10 +20,12 @@ import Options.Applicative
 --------------------------------------------------------------------------------
 import Server.Connection
 import Server.Exec
+import Server.Settings
+import Server.Timer
 
 --------------------------------------------------------------------------------
 data Run =
-  Run { runConnSettings :: ConnectionSettings }
+  Run { runGeneralSettings :: Settings }
 
 --------------------------------------------------------------------------------
 -- Parsers
@@ -37,7 +39,14 @@ cmdParser = info (helper <*> parseRun) description
 
 --------------------------------------------------------------------------------
 parseRun :: Parser Run
-parseRun = Run <$> parseConnectionSettings
+parseRun = Run <$> parseGeneralSettings
+
+--------------------------------------------------------------------------------
+parseGeneralSettings :: Parser Settings
+parseGeneralSettings =
+  Settings <$> parseConnectionSettings
+           <*> parseHeartbeatInterval
+           <*> parseHeartbeatTimeout
 
 --------------------------------------------------------------------------------
 parseConnectionSettings :: Parser ConnectionSettings
@@ -69,9 +78,36 @@ parsePort = option (eitherReader check) go
         Just port -> Right port
 
 --------------------------------------------------------------------------------
+parseHeartbeatInterval :: Parser Duration
+parseHeartbeatInterval = option (eitherReader durationReader) go
+  where
+    go = long "heartbeat-interval"
+           <> metavar "HEARTBEAT_INTERVAL"
+           <> help "Heartbeat interval (ms)"
+           <> value (msDuration 2000)
+           <> showDefault
+
+--------------------------------------------------------------------------------
+parseHeartbeatTimeout :: Parser Duration
+parseHeartbeatTimeout = option (eitherReader durationReader) go
+  where
+    go = long "heartbeat-timeout"
+           <> metavar "HEARTBEAT_TIMEOUT"
+           <> help "Heartbeat timeout (ms)"
+           <> value (msDuration 1000)
+           <> showDefault
+
+--------------------------------------------------------------------------------
+durationReader :: String -> Either String Duration
+durationReader input =
+  case readMay input of
+    Nothing -> Left "Invalid duration"
+    Just ms -> Right $ msDuration ms
+
+--------------------------------------------------------------------------------
 main :: IO ()
 main = execParser cmdParser >>= executeCmd
 
 --------------------------------------------------------------------------------
 executeCmd :: Run -> IO ()
-executeCmd run = exec (runConnSettings run)
+executeCmd run = exec (runGeneralSettings run)

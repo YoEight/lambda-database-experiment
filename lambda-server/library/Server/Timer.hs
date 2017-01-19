@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Server.Exec
+-- Module : Server.Timer
 -- Copyright : (C) 2017 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,24 +9,30 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Server.Exec (exec) where
+module Server.Timer where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
-import Server.Connection
-import Server.Settings
+newtype Duration = Duration Int64 deriving Show
 
 --------------------------------------------------------------------------------
-exec :: Settings -> IO ()
-exec setts = do
-  conn <- newServerConnection $ connectionSettings setts
-  forever $ do
-    client <- awaitClientConnection conn
-    say "New connection"
-    fork $ exchange client
+msDuration :: Int64 -> Duration
+msDuration = Duration . (1000 *)
 
 --------------------------------------------------------------------------------
-exchange :: ClientConnection -> IO ()
-exchange client = return ()
+secsDuration :: Int64 -> Duration
+secsDuration = msDuration . (1000 *)
+
+--------------------------------------------------------------------------------
+delayed :: Duration -> IO () -> IO ()
+delayed (Duration timespan) action = () <$ fork (go timespan)
+  where
+    go i = do
+      when (i > 0) $ do
+        let wait = min i (fromIntegral (maxBound :: Int))
+        threadDelay $ fromIntegral wait
+        go (timespan - wait)
+
+      action

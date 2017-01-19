@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Server.Exec
+-- Module : Server.Settings
 -- Copyright : (C) 2017 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,24 +9,18 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Server.Exec (exec) where
+module Server.Settings where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
 import Server.Connection
-import Server.Settings
+import Server.Timer
 
 --------------------------------------------------------------------------------
-exec :: Settings -> IO ()
-exec setts = do
-  conn <- newServerConnection $ connectionSettings setts
-  forever $ do
-    client <- awaitClientConnection conn
-    say "New connection"
-    fork $ exchange client
-
---------------------------------------------------------------------------------
-exchange :: ClientConnection -> IO ()
-exchange client = return ()
+data Settings =
+  Settings { connectionSettings :: ConnectionSettings
+           , heartbeatInterval  :: Duration
+           , heartbeatTimeout   :: Duration
+           }
