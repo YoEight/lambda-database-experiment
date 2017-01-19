@@ -1,4 +1,5 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Server.Connection
@@ -21,6 +22,7 @@ module Server.Connection
   , awaitClientConnection
   , recv
   , send
+  , close
   ) where
 
 --------------------------------------------------------------------------------
@@ -100,3 +102,9 @@ recv ClientConnection{..} = do
 --------------------------------------------------------------------------------
 send :: ClientConnection -> Pkg -> IO ()
 send ClientConnection{..} pkg = B.hPut innerConn $ encode pkg
+
+--------------------------------------------------------------------------------
+close :: ClientConnection -> IO ()
+close ClientConnection{..} = do
+  (_ :: Either SomeException ()) <- try (hClose innerConn)
+  return ()

@@ -12,9 +12,6 @@
 module Server.Settings where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-
---------------------------------------------------------------------------------
 import Server.Connection
 import Server.Timer
 
