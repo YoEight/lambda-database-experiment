@@ -51,6 +51,7 @@ library:
     - bytestring
     - uuid
     - cereal
+    - containers
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
