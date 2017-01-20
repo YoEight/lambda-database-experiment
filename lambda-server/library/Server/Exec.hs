@@ -44,16 +44,16 @@ data Env =
       , _opExec   :: OperationExec
       , _setts    :: Settings
       , _msgNum   :: IORef Integer
-      , _msgQueue :: TQueue Msg
-      , _pkgQueue :: TQueue Pkg
+      , _msgQueue :: Chan Msg
+      , _pkgQueue :: Chan Pkg
       }
 
 --------------------------------------------------------------------------------
 newEnv :: Settings -> OperationExec -> ClientConnection -> IO Env
 newEnv setts opExec conn =
   Env conn opExec setts <$> newIORef 0
-                        <*> newTQueueIO
-                        <*> newTQueueIO
+                        <*> newChan
+                        <*> newChan
 
 --------------------------------------------------------------------------------
 data Msg
@@ -66,15 +66,15 @@ data Msg
 data ActorType = ReceiverActor | WriterActor
 
 --------------------------------------------------------------------------------
-receiver :: TQueue Msg -> ClientConnection -> IO ()
+receiver :: Chan Msg -> ClientConnection -> IO ()
 receiver msgQueue c = forever $ do
   pkg <- recv c
-  atomically $ writeTQueue msgQueue (Recv pkg)
+  writeChan msgQueue (Recv pkg)
 
 --------------------------------------------------------------------------------
-writer :: TQueue Pkg -> ClientConnection -> IO ()
+writer :: Chan Pkg -> ClientConnection -> IO ()
 writer pkgQueue conn = forever $ do
-  pkg <- atomically $ readTQueue pkgQueue
+  pkg <- readChan pkgQueue
   send conn pkg
 
 --------------------------------------------------------------------------------
@@ -86,7 +86,7 @@ spawn Env{..} tpe = do
           WriterActor   -> writer _pkgQueue _conn
 
   _ <- forkFinally action $ \_ ->
-         atomically $ writeTQueue _msgQueue Stop
+         writeChan _msgQueue Stop
 
   return ()
 
@@ -95,14 +95,14 @@ scheduleHeartbeat :: Env -> IO ()
 scheduleHeartbeat Env{..} = do
   num <- readIORef _msgNum
   delayed (heartbeatInterval _setts) $
-    atomically $ writeTQueue _msgQueue (Heartbeat num)
+    writeChan _msgQueue (Heartbeat num)
 
 --------------------------------------------------------------------------------
 scheduleHeartbeatTimeout :: Env -> IO ()
 scheduleHeartbeatTimeout Env{..} = do
   num <- readIORef _msgNum
   delayed (heartbeatTimeout _setts) $
-    atomically $ writeTQueue _msgQueue (HeartbeatTimeout num)
+    writeChan _msgQueue (HeartbeatTimeout num)
 
 --------------------------------------------------------------------------------
 incrMsgNum :: Env -> IO ()
@@ -111,7 +111,7 @@ incrMsgNum Env{..} = atomicModifyIORef' _msgNum $ \i -> (succ 1, ())
 --------------------------------------------------------------------------------
 exchange :: Env -> IO ()
 exchange env@Env{..} = forever $ do
-  msg <- atomically $ readTQueue _msgQueue
+  msg <- readChan _msgQueue
   case msg of
     Recv pkg -> do
       incrMsgNum env
@@ -121,7 +121,7 @@ exchange env@Env{..} = forever $ do
 
         case outcome of
           OpSend opPkg ->
-            atomically $ writeTQueue _pkgQueue opPkg
+            writeChan _pkgQueue opPkg
 
           OpNoop ->
             return ()
@@ -133,7 +133,7 @@ exchange env@Env{..} = forever $ do
         then scheduleHeartbeat env
         else do
           pkg <- heartbeatRequest
-          atomically $ writeTQueue _pkgQueue pkg
+          writeChan _pkgQueue pkg
           scheduleHeartbeatTimeout env
 
     HeartbeatTimeout num -> do
