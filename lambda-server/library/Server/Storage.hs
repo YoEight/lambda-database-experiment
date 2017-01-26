@@ -22,12 +22,12 @@ module Server.Storage
   ) where
 
 --------------------------------------------------------------------------------
-import Data.List.NonEmpty
+import Data.List.NonEmpty hiding (reverse)
 import Data.Monoid
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.Sequence (Seq, (|>))
+import Data.Sequence (Seq, (|>), ViewL(..), viewl)
 import Protocol.Types
 
 --------------------------------------------------------------------------------
@@ -124,7 +124,15 @@ data ReadFailure
 
 --------------------------------------------------------------------------------
 readStream :: Storage -> StreamName -> Batch -> IO (ReadResult [SavedEvent])
-readStream = undefined
+readStream Storage{..} name b = atomically $ do
+  streams <- readTVar streamsVar
+
+  case lookup name streams of
+    Nothing     -> return $ ReadFailed StreamNotFound
+    Just stream -> do
+      let (nxt, eos, evts) = _readStream b stream
+
+      return $ ReadOk nxt eos evts
 
 --------------------------------------------------------------------------------
 _appendStream :: NonEmpty Event -> Stream -> (EventNumber, Stream)
@@ -138,3 +146,18 @@ _appendStream xs ss = foldl' go ((-1), ss) xs
                      , streamEvents     = evts |> SavedEvent num e
                      } in
       (nxtNum, s')
+
+--------------------------------------------------------------------------------
+_readStream :: Batch -> Stream -> (EventNumber, Bool, [SavedEvent])
+_readStream Batch{..} Stream{..}
+  | batchFrom >= streamNextNumber = ((-1), True, [])
+  | batchFrom < 0 = (streamNextNumber, False, [])
+  | otherwise = go 0 (-1) [] streamEvents
+  where
+    go i nxt xs cur =
+      case viewl cur of
+        EmptyL -> (nxt, True, reverse xs)
+        x :< rest
+          | eventNumber x < batchFrom -> go i (eventNumber x) xs rest
+          | i <= batchSize -> go (i+1) (eventNumber x) (x:xs) rest
+          | otherwise -> (nxt, False, reverse xs)
