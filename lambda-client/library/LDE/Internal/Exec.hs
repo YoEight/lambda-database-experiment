@@ -20,6 +20,7 @@ module LDE.Internal.Exec
 
 --------------------------------------------------------------------------------
 import Control.Exception (AsyncException(..), asyncExceptionFromException)
+import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -32,6 +33,7 @@ import LDE.Internal.Connection
 import LDE.Internal.CyclicQueue
 import LDE.Internal.Handler
 import LDE.Internal.Processor
+import LDE.Internal.Publish
 import LDE.Internal.Settings
 
 --------------------------------------------------------------------------------
@@ -82,13 +84,19 @@ data ActorType
 
 --------------------------------------------------------------------------------
 newEnv :: Settings -> IO Env
-newEnv setts =
+newEnv setts = mfix $ \env ->
   Env setts <$> (newConnection setts >>= newTVarIO)
             <*> newIORef initManagerState
-            <*> newProc
+            <*> newProc (pub env)
             <*> newCQ
             <*> newCQ
             <*> newCQ
+
+  where
+    pub Env{..} = Publish $ \outcome -> atomically $
+      case outcome of
+        SendPkg pkg -> writeCQ _pkgQueue pkg
+        Run action  -> writeCQ _jobQueue (Job action)
 
 --------------------------------------------------------------------------------
 closedMailbox :: Exception e => e -> Msg -> IO ()
@@ -201,13 +209,5 @@ cruising env@Env{..} = forever $ do
 
   case msg of
     Stopped e  -> throwIO e
-    Recv pkg   -> submitPkg _proc pkg >>= introspect env
-    Submit cmd -> submitCmd _proc cmd >>= introspect env
-
---------------------------------------------------------------------------------
-introspect :: Env -> Decision -> IO ()
-introspect Env{..} decision =
-  case decision of
-    SendPkg pkg -> atomically $ writeCQ _pkgQueue pkg
-    Run action  -> atomically $ writeCQ _jobQueue $ Job action
-    Noop        -> return ()
+    Recv pkg   -> submitPkg _proc pkg
+    Submit cmd -> submitCmd _proc cmd

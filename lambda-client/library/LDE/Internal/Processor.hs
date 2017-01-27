@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : LDE.Internal.Processor
@@ -11,7 +12,7 @@
 --------------------------------------------------------------------------------
 module LDE.Internal.Processor
   ( Proc
-  , Decision(..)
+  , ProcOutcome(..)
   , submitCmd
   , submitPkg
   , newProc
@@ -23,27 +24,28 @@ import Protocol.Package
 
 --------------------------------------------------------------------------------
 import LDE.Internal.Command
+import LDE.Internal.Publish
 
 --------------------------------------------------------------------------------
-data Decision
+data ProcOutcome
   = SendPkg Pkg
   | Run (IO ())
-  | Noop
 
 --------------------------------------------------------------------------------
-data Proc = Proc
+data Proc =
+  Proc { _pub :: Publish ProcOutcome }
 
 --------------------------------------------------------------------------------
-newProc :: IO Proc
-newProc = return Proc
+newProc :: Publish ProcOutcome -> IO Proc
+newProc pub = return $ Proc pub
 
 --------------------------------------------------------------------------------
-submitCmd :: Proc -> Command -> IO Decision
+submitCmd :: Proc -> Command -> IO ()
 submitCmd = undefined
 
 --------------------------------------------------------------------------------
-submitPkg :: Proc -> Pkg -> IO Decision
-submitPkg _ pkg =
+submitPkg :: Proc -> Pkg -> IO ()
+submitPkg Proc{..} pkg =
   case pkgCmd pkg of
-    0x01 -> return $ SendPkg $ heartbeatResponse (pkgId pkg)
-    _    -> return Noop
+    0x01 -> publish _pub (SendPkg $ heartbeatResponse (pkgId pkg))
+    _    -> return ()
