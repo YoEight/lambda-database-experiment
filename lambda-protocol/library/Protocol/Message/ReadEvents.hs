@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE DataKinds       #-}
+{-# LANGUAGE Rank2Types      #-}
 {-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
@@ -23,7 +24,6 @@ module Protocol.Message.ReadEvents
 import ClassyPrelude
 import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize hiding (Result)
-import Data.UUID
 
 --------------------------------------------------------------------------------
 import Protocol.Operation
@@ -92,7 +92,7 @@ createRespPkg pid name xs flag (EventNumber num) eos =
                     }
 
 --------------------------------------------------------------------------------
-parseOp :: MonadPlus m => Pkg -> m Operation
+parseOp :: MonadPlus m => Pkg -> m (Operation ReadEventsResp)
 parseOp Pkg{..} =
   case pkgCmd of
     0x04 ->
@@ -108,7 +108,7 @@ parseOp Pkg{..} =
     _ -> mzero
 
 --------------------------------------------------------------------------------
-parseResp :: MonadPlus m => Pkg -> m Response
+parseResp :: MonadPlus m => Pkg -> m (Response ReadEventsResp)
 parseResp Pkg{..} =
   case pkgCmd of
     0x05 ->

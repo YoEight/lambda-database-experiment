@@ -1,3 +1,5 @@
+{-# LANGUAGE GADTs           #-}
+{-# LANGUAGE Rank2Types      #-}
 {-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
@@ -27,7 +29,7 @@ import           Protocol.Operation
 import           Protocol.Package
 
 --------------------------------------------------------------------------------
-createPkg :: Operation -> Pkg
+createPkg :: forall a. Operation a -> Pkg
 createPkg Operation{..} =
   case operationType of
     WriteEvents name ver xs ->
@@ -36,20 +38,25 @@ createPkg Operation{..} =
       ReadEvents.createPkg operationId name b
 
 --------------------------------------------------------------------------------
-createRespPkg :: Response -> Pkg
-createRespPkg Response{..} =
-  case responseType of
-    WriteEventsResp num flag ->
-      WriteEvents.createRespPkg responseId num flag
-    ReadEventsResp name xs flag num eos ->
-      ReadEvents.createRespPkg responseId name xs flag num eos
+createRespPkg :: forall a. Operation a -> a -> Pkg
+createRespPkg Operation{..} = go operationType
+  where
+    go :: forall a. Request a -> a -> Pkg
+    go WriteEvents{} (WriteEventsResp num flag) =
+      WriteEvents.createRespPkg operationId num flag
+    go ReadEvents{} (ReadEventsResp name xs flag num eos) =
+      ReadEvents.createRespPkg operationId name xs flag num eos
 
 --------------------------------------------------------------------------------
-parseOp :: Pkg -> Maybe Operation
+parseOp :: Pkg -> Maybe SomeOperation
 parseOp pkg =
-  WriteEvents.parseOp pkg <|> ReadEvents.parseOp pkg
+  fmap SomeOperation (WriteEvents.parseOp pkg) <|>
+  fmap SomeOperation (ReadEvents.parseOp pkg)
 
 --------------------------------------------------------------------------------
-parseResp :: Pkg -> Maybe Response
-parseResp pkg =
-  WriteEvents.parseResp pkg <|> ReadEvents.parseResp pkg
+parseResp :: forall a. Pkg -> Request a ->  Maybe (Response a)
+parseResp pkg = go
+  where
+    go :: forall a. Request a -> Maybe (Response a)
+    go WriteEvents{} = WriteEvents.parseResp pkg
+    go ReadEvents{}  = ReadEvents.parseResp pkg

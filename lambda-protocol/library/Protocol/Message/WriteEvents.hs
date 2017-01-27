@@ -113,7 +113,7 @@ createRespPkg pid (EventNumber n) flag =
                      }
 
 --------------------------------------------------------------------------------
-parseOp :: MonadPlus m => Pkg -> m Operation
+parseOp :: MonadPlus m => Pkg -> m (Operation WriteEventsResp)
 parseOp Pkg{..} =
   case pkgCmd of
     0x02 ->
@@ -143,7 +143,7 @@ parseOp Pkg{..} =
     _ -> mzero
 
 --------------------------------------------------------------------------------
-parseResp :: MonadPlus m => Pkg -> m Response
+parseResp :: MonadPlus m => Pkg -> m (Response WriteEventsResp)
 parseResp Pkg{..} =
   case pkgCmd of
     0x03 ->

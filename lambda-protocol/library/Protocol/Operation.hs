@@ -1,3 +1,5 @@
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs                     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Protocol.Operation
@@ -22,23 +24,35 @@ import Protocol.Package
 import Protocol.Types
 
 --------------------------------------------------------------------------------
-data Operation =
+data Request a where
+  WriteEvents :: StreamName
+              -> ExpectedVersion
+              -> NonEmpty Event
+              -> Request WriteEventsResp
+
+  ReadEvents :: StreamName
+             -> Batch
+             -> Request ReadEventsResp
+
+--------------------------------------------------------------------------------
+data WriteEventsResp =
+  WriteEventsResp EventNumber WriteResultFlag
+
+--------------------------------------------------------------------------------
+data ReadEventsResp =
+  ReadEventsResp StreamName [SavedEvent] ReadResultFlag EventNumber Bool
+
+--------------------------------------------------------------------------------
+data Operation a =
   Operation { operationId   :: PkgId
-            , operationType :: OperationType
+            , operationType :: Request a
             }
 
 --------------------------------------------------------------------------------
-data OperationType
-  = WriteEvents StreamName ExpectedVersion (NonEmpty Event)
-  | ReadEvents StreamName Batch
+data SomeOperation = forall a. SomeOperation (Operation a)
 
 --------------------------------------------------------------------------------
-data Response =
+data Response a =
   Response { responseId   :: PkgId
-           , responseType :: ResponseType
+           , responseType :: a
            }
-
---------------------------------------------------------------------------------
-data ResponseType
-  = WriteEventsResp EventNumber WriteResultFlag
-  | ReadEventsResp StreamName [SavedEvent] ReadResultFlag EventNumber Bool
