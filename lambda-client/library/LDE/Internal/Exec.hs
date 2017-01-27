@@ -40,7 +40,7 @@ import LDE.Internal.Settings
 data Msg
   = Recv Pkg
   | Stopped SomeException
-  | Submit Command
+  | Submit SomeCommand
 
 --------------------------------------------------------------------------------
 data Exec =

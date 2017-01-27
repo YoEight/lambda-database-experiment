@@ -1,3 +1,4 @@
+{-# LANGUAGE ExistentialQuantification #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : LDE.Internal.Command
@@ -12,4 +13,16 @@
 module LDE.Internal.Command where
 
 --------------------------------------------------------------------------------
-data Command = Command
+import ClassyPrelude
+
+--------------------------------------------------------------------------------
+import Protocol.Operation
+
+--------------------------------------------------------------------------------
+data Command a =
+  Command { commandReq :: Request a
+          , commandCb  :: a -> IO ()
+          }
+
+--------------------------------------------------------------------------------
+data SomeCommand = forall a. SomeCommand (Command a)

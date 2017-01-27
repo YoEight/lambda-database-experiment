@@ -20,7 +20,9 @@ module LDE.Internal.Processor
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Protocol.Message
 import Protocol.Package
+import Protocol.Operation
 
 --------------------------------------------------------------------------------
 import LDE.Internal.Command
@@ -32,20 +34,47 @@ data ProcOutcome
   | Run (IO ())
 
 --------------------------------------------------------------------------------
+type Commands = Map PkgId SomeCommand
+
+--------------------------------------------------------------------------------
 data Proc =
-  Proc { _pub :: Publish ProcOutcome }
+  Proc { _pub  :: Publish ProcOutcome
+       , _cmds :: IORef Commands
+       }
 
 --------------------------------------------------------------------------------
 newProc :: Publish ProcOutcome -> IO Proc
-newProc pub = return $ Proc pub
+newProc pub = Proc pub <$> newIORef mempty
 
 --------------------------------------------------------------------------------
-submitCmd :: Proc -> Command -> IO ()
-submitCmd = undefined
+submitCmd :: Proc -> SomeCommand -> IO ()
+submitCmd Proc{..} cmd@(SomeCommand c) = do
+  pid <- freshPkgId
+  let op  = Operation pid (commandReq c)
+      pkg = createPkg op
+
+  atomicModifyIORef' _cmds $ \m ->
+    let m' = insertMap pid cmd m in (m', ())
+
+  publish _pub (SendPkg pkg)
+
 
 --------------------------------------------------------------------------------
 submitPkg :: Proc -> Pkg -> IO ()
-submitPkg Proc{..} pkg =
-  case pkgCmd pkg of
-    0x01 -> publish _pub (SendPkg $ heartbeatResponse (pkgId pkg))
-    _    -> return ()
+submitPkg Proc{..} pkg@Pkg{..} =
+  case pkgCmd of
+    0x01 -> publish _pub (SendPkg $ heartbeatResponse pkgId)
+    _    -> do
+      cmds <- readIORef _cmds
+
+      let action = do
+            SomeCommand cmd <- lookup pkgId cmds
+            resp            <- responseType <$> parseResp pkg (commandReq cmd)
+
+            return (commandCb cmd resp)
+
+      for_ action $ \job -> do
+        atomicModifyIORef' _cmds $ \m ->
+          let m' = deleteMap pkgId m in (m', ())
+
+        publish _pub (Run job)
