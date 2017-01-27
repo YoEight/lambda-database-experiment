@@ -15,6 +15,7 @@ module Server.Exec (exec) where
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Protocol.Message
+import Protocol.Operation
 import Protocol.Package
 
 --------------------------------------------------------------------------------
@@ -116,7 +117,7 @@ exchange env@Env{..} = forever $ do
     Recv pkg -> do
       incrMsgNum env
 
-      for_ (parseOp pkg) $ \op -> do
+      for_ (parseOp pkg) $ \(SomeOperation op) -> do
         outcome <- executeOperation _opExec op
 
         case outcome of

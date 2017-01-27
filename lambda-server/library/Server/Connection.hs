@@ -32,7 +32,6 @@ import           Data.Serialize
 import           Data.UUID
 import           Data.UUID.V4
 import           Network
-import           Network.Connection
 
 --------------------------------------------------------------------------------
 import Protocol.Package

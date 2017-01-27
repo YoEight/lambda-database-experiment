@@ -46,7 +46,6 @@ library:
     - base
     - classy-prelude
     - lambda-protocol
-    - connection
     - network
     - bytestring
     - uuid

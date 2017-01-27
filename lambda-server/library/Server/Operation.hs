@@ -1,3 +1,5 @@
+{-# LANGUAGE GADTs           #-}
+{-# LANGUAGE Rank2Types      #-}
 {-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
@@ -43,8 +45,8 @@ newOperationExec setts =
   OperationExec <$> newInMemoryStorage setts
 
 --------------------------------------------------------------------------------
-executeOperation :: OperationExec -> Operation -> IO OpMsg
-executeOperation OperationExec{..} Operation{..} =
+executeOperation :: forall a. OperationExec -> Operation a -> IO OpMsg
+executeOperation OperationExec{..} op@Operation{..} =
   case operationType of
     WriteEvents name ver xs -> do
       outcome <- appendStream storage name ver xs
@@ -59,9 +61,7 @@ executeOperation OperationExec{..} Operation{..} =
                         WrongExpectedVersion -> WriteWrongExpectedVersion in
                 WriteEventsResp (-1) flag
 
-          resp = Response operationId respType
-
-      return $ OpSend $ createRespPkg resp
+      return $ OpSend $ createRespPkg op respType
 
     ReadEvents name batch -> do
       outcome <- readStream storage name batch
@@ -76,6 +76,4 @@ executeOperation OperationExec{..} Operation{..} =
                         StreamNotFound -> ReadNoStream in
                 ReadEventsResp name [] flag (-1) True
 
-          resp = Response operationId respType
-
-      return $ OpSend $ createRespPkg resp
+      return $ OpSend $ createRespPkg op respType
