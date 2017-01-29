@@ -15,6 +15,7 @@ module LDE.Internal.Exec
   ( Exec
   , newExec
   , execSend
+  , execSubmit
   , execWaitClosed
   ) where
 
@@ -51,6 +52,10 @@ data Exec =
 --------------------------------------------------------------------------------
 execSend :: Exec -> Msg -> IO ()
 execSend Exec{..} msg = ($ msg) =<< atomically senderSTM
+
+--------------------------------------------------------------------------------
+execSubmit :: Exec -> Command a -> IO ()
+execSubmit e cmd = execSend e (Submit (SomeCommand cmd))
 
 --------------------------------------------------------------------------------
 execWaitClosed :: Exec -> IO ()
