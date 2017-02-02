@@ -22,11 +22,13 @@ module Server.Storage
   ) where
 
 --------------------------------------------------------------------------------
-import Data.List.NonEmpty hiding (reverse)
+import Data.List.NonEmpty hiding (reverse, length, dropWhile)
 import Data.Monoid
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Hashable
+import qualified Data.HashMap.Strict as H
 import Data.Sequence (Seq, (|>), ViewL(..), viewl)
 import Protocol.Types
 
@@ -44,7 +46,7 @@ emptyStream :: Stream
 emptyStream = Stream 0 mempty
 
 --------------------------------------------------------------------------------
-type Streams = Map StreamName Stream
+type Streams = HashMap StreamName Stream
 
 --------------------------------------------------------------------------------
 data Storage =
@@ -86,32 +88,80 @@ appendStream :: Storage
 appendStream Storage{..} name ver xs = atomically $ do
   streams <- readTVar streamsVar
 
-  let alterStream stream =
-        let (nxtNum, newStream) = _appendStream xs stream
-            streams'            = insertMap name newStream streams in
+  case canSaveEvents ver name xs streams of
+    CanSave stream  -> WriteOk <$> alterStream streams stream
+    AlreadyDone num -> return $ WriteOk num
+    Nope            -> return $ WriteFailed WrongExpectedVersion
+  where
+    alterStream streams stream =
+      let (nxtNum, newStream) = _appendStream xs stream
+          streams'            = insertMap name newStream streams in
 
-        nxtNum <$ writeTVar streamsVar streams'
+      nxtNum <$ writeTVar streamsVar streams'
 
-  case lookup name streams of
+--------------------------------------------------------------------------------
+streamEventsAfterNum :: EventNumber -> Stream -> Seq SavedEvent
+streamEventsAfterNum n = dropWhile ((< n) . eventNumber) . streamEvents
+
+--------------------------------------------------------------------------------
+data SaveOutcome
+  = CanSave Stream
+  | AlreadyDone EventNumber
+  | Nope
+
+--------------------------------------------------------------------------------
+canSaveEvents :: ExpectedVersion
+              -> StreamName
+              -> NonEmpty Event
+              -> Streams
+              -> SaveOutcome
+canSaveEvents ver name evts ss =
+  case lookup name ss of
     Nothing ->
-      if assumeNonExistence ver
-      then
-        WriteOk <$> alterStream emptyStream
-      else
-        return $ WriteFailed WrongExpectedVersion
+      case ver of
+        StreamExists   -> Nope
+        ExactVersion{} -> Nope
+        _              -> CanSave emptyStream
+    Just stream -> let curNum = streamNextNumber stream in
+      case ver of
+        StreamExists -> CanSave stream
+        NoStream     -> Nope
+        AnyVersion   -> checkConcurrentConflict Nothing stream evts
+        ExactVersion n
+          | n > curNum  -> Nope
+          | n == curNum -> CanSave stream
+          | otherwise   -> checkConcurrentConflict (Just n) stream evts
 
-    Just stream ->
-      case assumeExistence ver of
-        Nothing     -> return $ WriteFailed WrongExpectedVersion
-        Just exactM -> do
-          let curNum      = streamNextNumber stream
-              matchExpVer = getAll $ foldMap (All . (== curNum)) exactM
+--------------------------------------------------------------------------------
+checkConcurrentConflict :: Maybe EventNumber
+                        -> Stream
+                        -> NonEmpty Event
+                        -> SaveOutcome
+checkConcurrentConflict usecase stream evts =
+  case usecase of
+    Just{} -> if null committedMap
+                then AlreadyDone (streamNextNumber stream)
+                else Nope
 
-          if matchExpVer
-          then
-            WriteOk <$> alterStream stream
-          else
-            return $ WriteFailed WrongExpectedVersion
+    Nothing -> if null committedMap
+               then AlreadyDone (streamNextNumber stream)
+               else if length initMap == length committedMap
+                    then CanSave stream
+                    else Nope
+  where
+    initMap = flip foldMap evts $ \e ->
+      H.singleton (eventId e) ()
+
+    streamTail =
+      case usecase of
+        Just num -> streamEventsAfterNum num stream
+        Nothing  -> streamEvents stream
+
+    -- FIXME - Stop the recursion as soon the map is empty.
+    allCommitted = flip foldl' initMap $ \m s ->
+      let eid = eventId (savedEvent s) in deleteMap eid m
+
+    committedMap = allCommitted streamTail
 
 --------------------------------------------------------------------------------
 data ReadResult a

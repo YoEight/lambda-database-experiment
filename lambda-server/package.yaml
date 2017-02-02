@@ -51,6 +51,8 @@ library:
     - uuid
     - cereal
     - containers
+    - hashable
+    - unordered-containers
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

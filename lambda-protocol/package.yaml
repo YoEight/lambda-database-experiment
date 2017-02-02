@@ -21,6 +21,7 @@ library:
     - classy-prelude
     - uuid
     - cereal
+    - hashable
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

@@ -13,6 +13,7 @@ module Protocol.Types where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Hashable
 import Data.Serialize
 import Data.UUID hiding (fromString)
 import Data.UUID.V4
@@ -88,6 +89,10 @@ properties (Properties m) = mapToList m
 newtype EventId = EventId UUID deriving (Eq, Ord)
 
 --------------------------------------------------------------------------------
+instance Hashable EventId where
+  hashWithSalt x (EventId i) = hashWithSalt x i
+
+--------------------------------------------------------------------------------
 eventIdBytes :: EventId -> ByteString
 eventIdBytes (EventId uuid) = toStrict $ toByteString uuid
 
@@ -107,6 +112,10 @@ eventIdByteString (EventId uuid) = toStrict $ toByteString uuid
 --------------------------------------------------------------------------------
 -- | Represents a stream name.
 newtype StreamName = StreamName { streamName :: Text } deriving (Eq, Ord)
+
+--------------------------------------------------------------------------------
+instance Hashable StreamName where
+  hashWithSalt x (StreamName n) = hashWithSalt x n
 
 --------------------------------------------------------------------------------
 instance Show StreamName where
@@ -165,7 +174,6 @@ data ExpectedVersion
   | ExactVersion EventNumber
     -- Stream should be at givent event number.
   deriving Show
-
 
 --------------------------------------------------------------------------------
 -- | Represents batch information needed to read a stream.
