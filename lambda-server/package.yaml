@@ -53,6 +53,8 @@ library:
     - containers
     - hashable
     - unordered-containers
+    - conduit
+    - resourcet
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
