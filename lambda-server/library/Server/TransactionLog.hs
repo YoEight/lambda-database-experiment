@@ -12,7 +12,12 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Server.TransactionLog where
+module Server.TransactionLog
+  ( Backend
+  , LogMsg(..)
+  , TransactionId
+  , save
+  ) where
 
 --------------------------------------------------------------------------------
 import System.IO
@@ -29,7 +34,20 @@ import Data.UUID.V4
 import Protocol.Types
 
 --------------------------------------------------------------------------------
+import Server.Messaging
+
+--------------------------------------------------------------------------------
 newtype TransactionId = TransactionId UUID deriving (Eq, Ord, Show)
+
+--------------------------------------------------------------------------------
+data LogMsg
+  = Prepared TransactionId EventId Int32
+  | Committed TransactionId
+
+--------------------------------------------------------------------------------
+data Msg
+  = DoSave StreamName [Event]
+  | DoCommit TransactionId
 
 --------------------------------------------------------------------------------
 instance Serialize TransactionId where
@@ -53,29 +71,48 @@ transactionIdSize = 16
 --------------------------------------------------------------------------------
 data Backend =
   Backend { _dbName   :: FilePath
+          , _dbPush   :: Publish LogMsg
+          , _dbChan   :: Chan Msg
           , _dbLock   :: QSem
-          , _dbSeqNum :: IORef Int
+          , _dbSeqNum :: IORef Int32
           }
 
 --------------------------------------------------------------------------------
-newBackend :: FilePath -> IO Backend
-newBackend p = Backend p <$> newQSem 1
-                         <*> newIORef 0
+newBackend :: FilePath -> Publish LogMsg -> IO Backend
+newBackend p pub = do
+  c <- newChan
+  b <- Backend p pub c <$> newQSem 1
+                       <*> newIORef 0
+
+  let action = do
+        _ <- forkFinally (worker b) $ \_ -> action
+        return ()
+
+  return b
 
 --------------------------------------------------------------------------------
-save :: Backend -> StreamName -> [SavedEvent] -> IO TransactionId
-save Backend{..} name evts =
+save :: Backend -> StreamName -> [Event] -> IO ()
+save Backend{..} n xs = writeChan _dbChan (DoSave n xs)
+
+--------------------------------------------------------------------------------
+worker :: Backend -> IO ()
+worker b@Backend{..} = forever (readChan _dbChan >>= go)
+  where
+    go (DoSave n xs) = doSave b n xs
+    go (DoCommit t)  = doCommit b t
+
+--------------------------------------------------------------------------------
+doSave :: Backend -> StreamName -> [Event] -> IO ()
+doSave b@Backend{..} name evts =
   bracket_ (waitQSem _dbLock) (signalQSem _dbLock) $ do
     tid <- newTransactionId
 
-    let src = sourceList evts $= eventToLog _dbSeqNum tid name
+    let src = sourceList evts $= eventToLog b tid name
     runResourceT (src $$ sinkLogs _dbName)
 
-    return tid
-
 --------------------------------------------------------------------------------
-commit :: Backend -> TransactionId -> IO ()
-commit Backend{..} tid = bracket_ (waitQSem _dbLock) (signalQSem _dbLock) $ do
+doCommit :: Backend -> TransactionId -> IO ()
+doCommit Backend{..} tid = bracket_ (waitQSem _dbLock) (signalQSem _dbLock) $ do
   cur <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
 
   let log = Log { logSeqNum      = cur
@@ -87,6 +124,8 @@ commit Backend{..} tid = bracket_ (waitQSem _dbLock) (signalQSem _dbLock) $ do
                 }
 
   runResourceT (yield log $$ sinkLogs _dbName)
+
+  publish _dbPush (Committed tid)
 
 --------------------------------------------------------------------------------
 type LogFlag = Word8
@@ -128,7 +167,7 @@ logTypeSize = 1
 
 --------------------------------------------------------------------------------
 data Log =
-  Log { logSeqNum      :: Int
+  Log { logSeqNum      :: Int32
       , logType        :: LogType
       , logTransaction :: TransactionId
       , logFlag        :: LogFlag
@@ -168,16 +207,16 @@ instance Serialize Log where
 
 --------------------------------------------------------------------------------
 eventToLog :: MonadIO m
-           => IORef Int
+           => Backend
            -> TransactionId
            -> StreamName
-           -> Conduit SavedEvent m Log
-eventToLog ref tid name = await >>= go True
+           -> Conduit Event m Log
+eventToLog Backend{..} tid name = await >>= go True
   where
-    go _ Nothing        = return ()
-    go isFirst (Just e) = do
+    go _ Nothing                  = liftIO $ writeChan _dbChan (DoCommit tid)
+    go isFirst (Just e@Event{..}) = do
       next <- await
-      cur  <- liftIO $ atomicModifyIORef' ref $ \i -> (i+1, i)
+      cur  <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
       let tmp  = if isFirst
                  then transactionBeginFlag
                  else noopFlag
@@ -195,6 +234,7 @@ eventToLog ref tid name = await >>= go True
                      }
 
       yield log
+      publish _dbPush (Prepared tid eventId cur)
       go False next
 
 --------------------------------------------------------------------------------
