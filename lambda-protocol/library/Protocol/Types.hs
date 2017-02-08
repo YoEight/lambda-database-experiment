@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Protocol.Types
@@ -22,12 +23,21 @@ import Data.UUID.V4
 newtype Data = Data ByteString
 
 --------------------------------------------------------------------------------
+emptyData :: Data
+emptyData = Data mempty
+
+--------------------------------------------------------------------------------
 dataBytes :: Data -> ByteString
 dataBytes (Data bs) = bs
 
 --------------------------------------------------------------------------------
 instance Show Data where
   show _ = "Data(*Binary data*)"
+
+--------------------------------------------------------------------------------
+instance Serialize Data where
+  get = Data <$> get
+  put (Data bs) =  put bs
 
 --------------------------------------------------------------------------------
 -- | Used to store a set a properties. One example is to be used as 'Event'
@@ -93,6 +103,16 @@ instance Hashable EventId where
   hashWithSalt x (EventId i) = hashWithSalt x i
 
 --------------------------------------------------------------------------------
+instance Serialize EventId where
+  get = do
+    bs <- getLazyByteString 16
+    case fromByteString bs of
+      Just uuid -> return $ EventId uuid
+      Nothing   -> mzero
+
+  put (EventId uuid) = put (toByteString uuid)
+
+--------------------------------------------------------------------------------
 eventIdBytes :: EventId -> ByteString
 eventIdBytes (EventId uuid) = toStrict $ toByteString uuid
 
@@ -122,12 +142,32 @@ instance Show StreamName where
   show (StreamName s) = show s
 
 --------------------------------------------------------------------------------
+instance Serialize StreamName where
+  get = do
+    siz <- fromIntegral <$> getWord32le
+    isolate siz ((StreamName . decodeUtf8) <$> get)
+
+  put (StreamName n) = do
+    putWord32le (fromIntegral $ length n)
+    put $ encodeUtf8 n
+
+--------------------------------------------------------------------------------
 instance IsString StreamName where
   fromString = StreamName . fromString
 
 --------------------------------------------------------------------------------
 -- | Used to identity the type of an 'Event'.
 newtype EventType = EventType Text deriving Eq
+
+--------------------------------------------------------------------------------
+instance Serialize EventType where
+  get = do
+    siz <- fromIntegral <$> getWord32le
+    (EventType . decodeUtf8) <$> getByteString siz
+
+  put (EventType tpe) = do
+    putWord32le (fromIntegral $ length tpe)
+    put (encodeUtf8 tpe)
 
 --------------------------------------------------------------------------------
 eventTypeText :: EventType -> Text
@@ -151,8 +191,28 @@ data Event =
         } deriving Show
 
 --------------------------------------------------------------------------------
+instance Serialize Event where
+  get =
+    Event <$> get
+          <*> get
+          <*> get
+          <*> get
+
+  put Event{..} = do
+    put eventType
+    put eventId
+    put eventPayload
+    put eventMetadata
+
+--------------------------------------------------------------------------------
 -- | Represents an event index in a stream.
 newtype EventNumber = EventNumber Int32 deriving (Eq, Ord, Num, Enum, Show)
+
+--------------------------------------------------------------------------------
+instance Serialize EventNumber where
+  get = fromIntegral <$> getWord32le
+
+  put (EventNumber n) = putWord32le (fromIntegral n)
 
 --------------------------------------------------------------------------------
 -- | Represents an event that's saved into the event store.
@@ -160,6 +220,16 @@ data SavedEvent =
   SavedEvent { eventNumber :: EventNumber
              , savedEvent :: Event
              } deriving Show
+
+--------------------------------------------------------------------------------
+instance Serialize SavedEvent where
+  get =
+    SavedEvent <$> get
+               <*> get
+
+  put SavedEvent{..} = do
+    put eventNumber
+    put savedEvent
 
 --------------------------------------------------------------------------------
 -- | The purpose of 'ExpectedVersion' is to make sure a certain stream state is
