@@ -73,6 +73,7 @@ tests:
     - uuid
     - classy-prelude
     - directory
+    - lambda-protocol
     ghc-options:
     - -rtsopts
     - -threaded

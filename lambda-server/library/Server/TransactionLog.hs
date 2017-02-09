@@ -90,6 +90,7 @@ newBackend path pub = do
         _ <- forkFinally (worker b) $ \_ -> action
         return ()
 
+  action
   return b
 
 --------------------------------------------------------------------------------
@@ -266,8 +267,12 @@ sourceFromFile h = go
 
 --------------------------------------------------------------------------------
 sinkLogs :: MonadResource m => Backend -> Sink Log m ()
-sinkLogs b =
-  bracketP (openBinaryFile (_dbName b) AppendMode) hClose (consumeToFile b)
+sinkLogs b = bracketP useFile hClose (consumeToFile b)
+  where
+    useFile = do
+      h <- openBinaryFile (_dbName b) WriteMode
+      hSeek h SeekFromEnd 0
+      return h
 
 --------------------------------------------------------------------------------
 consumeToFile :: MonadResource m => Backend -> Handle -> Sink Log m ()

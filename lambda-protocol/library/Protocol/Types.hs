@@ -20,7 +20,11 @@ import Data.UUID hiding (fromString)
 import Data.UUID.V4
 
 --------------------------------------------------------------------------------
-newtype Data = Data ByteString
+newtype Data = Data ByteString deriving Eq
+
+--------------------------------------------------------------------------------
+instance IsString Data where
+  fromString = Data . fromString
 
 --------------------------------------------------------------------------------
 emptyData :: Data
@@ -42,7 +46,7 @@ instance Serialize Data where
 --------------------------------------------------------------------------------
 -- | Used to store a set a properties. One example is to be used as 'Event'
 --   metadata.
-newtype Properties = Properties (Map Text Text)
+newtype Properties = Properties (Map Text Text) deriving Eq
 
 --------------------------------------------------------------------------------
 instance Monoid Properties where
@@ -188,7 +192,7 @@ data Event =
         , eventId :: EventId
         , eventPayload :: Data
         , eventMetadata :: Maybe Properties
-        } deriving Show
+        } deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
 instance Serialize Event where
