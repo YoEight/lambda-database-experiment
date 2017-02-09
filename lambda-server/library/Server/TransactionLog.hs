@@ -17,6 +17,7 @@ module Server.TransactionLog
   , LogMsg(..)
   , TransactionId
   , save
+  , newBackend
   ) where
 
 --------------------------------------------------------------------------------
@@ -291,7 +292,7 @@ loadLastSeqNum path = do
   (_, h) <- allocate (openBinaryFile path ReadWriteMode) hClose
 
   catchIOError (getLastSeqNum h) $ \e ->
-    if isDoesNotExistError e
+    if isDoesNotExistError e || isUserError e
     then initializeHeader h
     else throw e
 

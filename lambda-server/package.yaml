@@ -63,11 +63,16 @@ name: lambda-server
 synopsis: A new Haskeleton package.
 tests:
   lambda-server-test-suite:
+    default-extensions:
+      - NoImplicitPrelude
     dependencies:
     - base
     - lambda-server
     - tasty
     - tasty-hspec
+    - uuid
+    - classy-prelude
+    - directory
     ghc-options:
     - -rtsopts
     - -threaded
