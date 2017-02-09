@@ -78,9 +78,12 @@ data Backend =
 
 --------------------------------------------------------------------------------
 newBackend :: FilePath -> Publish LogMsg -> IO Backend
-newBackend p pub = do
+newBackend path pub = do
+  let seqNumEff       = runResourceT $ loadLastSeqNum path
+      createSeqNumRef = seqNumEff >>= newIORef
+
   c <- newChan
-  b <- Backend p pub c <$> newIORef 0
+  b <- Backend path pub c <$> createSeqNumRef
 
   let action = do
         _ <- forkFinally (worker b) $ \_ -> action
@@ -102,14 +105,14 @@ worker b@Backend{..} = forever (readChan _dbChan >>= go)
 --------------------------------------------------------------------------------
 doSave :: Backend -> StreamName -> [Event] -> IO ()
 doSave b@Backend{..} name evts = do
-    tid <- newTransactionId
+  tid <- newTransactionId
 
-    let src = sourceList evts $= eventToLog b tid name
-    runResourceT (src $$ sinkLogs _dbName)
+  let src = sourceList evts $= eventToLog b tid name
+  runResourceT (src $$ sinkLogs b)
 
 --------------------------------------------------------------------------------
 doCommit :: Backend -> TransactionId -> IO ()
-doCommit Backend{..} tid = do
+doCommit b@Backend{..} tid = do
   cur <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
 
   let log = Log { logSeqNum      = cur
@@ -120,7 +123,7 @@ doCommit Backend{..} tid = do
                 , logData        = ""
                 }
 
-  runResourceT (yield log $$ sinkLogs _dbName)
+  runResourceT (yield log $$ sinkLogs b)
 
   publish _dbPush (Committed tid)
 
@@ -236,7 +239,12 @@ eventToLog Backend{..} tid name = await >>= go True
 
 --------------------------------------------------------------------------------
 sourceLogs :: MonadResource m => FilePath -> Source m Log
-sourceLogs file = bracketP (openFile file ReadMode) hClose sourceFromFile
+sourceLogs file = bracketP openHandle hClose sourceFromFile
+  where
+    openHandle = do
+      h <- openBinaryFile file ReadMode
+      hSeek h AbsoluteSeek 4
+      return h
 
 --------------------------------------------------------------------------------
 sourceFromFile :: MonadResource m => Handle -> Source m Log
@@ -256,14 +264,50 @@ sourceFromFile h = go
                 go
 
 --------------------------------------------------------------------------------
-sinkLogs :: MonadResource m => FilePath -> Sink Log m ()
-sinkLogs file = bracketP (openFile file AppendMode) hClose consumeToFile
+sinkLogs :: MonadResource m => Backend -> Sink Log m ()
+sinkLogs b =
+  bracketP (openBinaryFile (_dbName b) AppendMode) hClose (consumeToFile b)
 
 --------------------------------------------------------------------------------
-consumeToFile :: MonadResource m => Handle -> Sink Log m ()
-consumeToFile h  = awaitForever go
+consumeToFile :: MonadResource m => Backend -> Handle -> Sink Log m ()
+consumeToFile Backend{..} h = await >>= go
   where
-    go log = liftIO $ do
-      hPut h (runPut (putWord32le $ fromIntegral $ logSize log))
-      hPut h (encode log)
+    go Nothing = liftIO $ do
+      cur <- readIORef _dbSeqNum
+      hSeek h AbsoluteSeek 0
+      hPut h (runPut $ putWord32le (fromIntegral cur))
       hFlush h
+    go (Just log) = do
+      liftIO $ do
+        hPut h (runPut (putWord32le $ fromIntegral $ logSize log))
+        hPut h (encode log)
+        hFlush h
+
+      await >>= go
+
+--------------------------------------------------------------------------------
+loadLastSeqNum :: (MonadCatch m, MonadResource m) => FilePath -> m Int32
+loadLastSeqNum path = do
+  (_, h) <- allocate (openBinaryFile path ReadWriteMode) hClose
+
+  catchIOError (getLastSeqNum h) $ \e ->
+    if isDoesNotExistError e
+    then initializeHeader h
+    else throw e
+
+--------------------------------------------------------------------------------
+getLastSeqNum :: MonadIO m => Handle -> m Int32
+getLastSeqNum h = liftIO $ do
+  hSeek h AbsoluteSeek 0
+  bs <- hGetSome h 4
+  case runGet getWord32le bs of
+    Right i -> return $ fromIntegral i
+    Left  e -> fail e
+
+--------------------------------------------------------------------------------
+initializeHeader :: MonadIO m => Handle -> m Int32
+initializeHeader h = liftIO $ do
+  hSeek h AbsoluteSeek 0
+  hPut h (runPut $ putWord32le 0)
+  hFlush h
+  return 0
