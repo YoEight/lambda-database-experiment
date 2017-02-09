@@ -73,7 +73,6 @@ data Backend =
   Backend { _dbName   :: FilePath
           , _dbPush   :: Publish LogMsg
           , _dbChan   :: Chan Msg
-          , _dbLock   :: QSem
           , _dbSeqNum :: IORef Int32
           }
 
@@ -81,8 +80,7 @@ data Backend =
 newBackend :: FilePath -> Publish LogMsg -> IO Backend
 newBackend p pub = do
   c <- newChan
-  b <- Backend p pub c <$> newQSem 1
-                       <*> newIORef 0
+  b <- Backend p pub c <$> newIORef 0
 
   let action = do
         _ <- forkFinally (worker b) $ \_ -> action
@@ -103,8 +101,7 @@ worker b@Backend{..} = forever (readChan _dbChan >>= go)
 
 --------------------------------------------------------------------------------
 doSave :: Backend -> StreamName -> [Event] -> IO ()
-doSave b@Backend{..} name evts =
-  bracket_ (waitQSem _dbLock) (signalQSem _dbLock) $ do
+doSave b@Backend{..} name evts = do
     tid <- newTransactionId
 
     let src = sourceList evts $= eventToLog b tid name
@@ -112,7 +109,7 @@ doSave b@Backend{..} name evts =
 
 --------------------------------------------------------------------------------
 doCommit :: Backend -> TransactionId -> IO ()
-doCommit Backend{..} tid = bracket_ (waitQSem _dbLock) (signalQSem _dbLock) $ do
+doCommit Backend{..} tid = do
   cur <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
 
   let log = Log { logSeqNum      = cur
