@@ -11,9 +11,11 @@ extra-source-files:
 - stack.yaml
 ghc-options: -Wall
 github: YoEight/lambda-protocol
+default-extensions:
+  - NoImplicitPrelude
+  - OverloadedStrings
 library:
   default-extensions:
-    - NoImplicitPrelude
     - GeneralizedNewtypeDeriving
   dependencies:
     - base >=4.9 && <5
@@ -34,6 +36,9 @@ tests:
     - lambda-protocol
     - tasty
     - tasty-hspec
+    - classy-prelude
+    - directory
+    - cereal
     ghc-options:
     - -rtsopts
     - -threaded

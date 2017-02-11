@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- |
--- Module : Main
+-- Module : Test.Common
 -- Copyright : (C) 2017 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -9,16 +9,18 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-import           ClassyPrelude
-import qualified Test.Tasty
-import           Test.Tasty.Hspec
+module Test.Common where
 
 --------------------------------------------------------------------------------
-import qualified Test.Serialize as Serialize
+import ClassyPrelude
+import System.Directory
 
 --------------------------------------------------------------------------------
-main :: IO ()
-main = do
-    tree <- sequence [ testSpec "Serialize" Serialize.spec ]
-    let test = Test.Tasty.testGroup "protocol" tree
-    Test.Tasty.defaultMain test
+freshFile :: FilePath -> IO FilePath
+freshFile p = do
+  let path = "trash/" ++ p
+  createDirectoryIfMissing True "trash"
+  whenM (doesFileExist path) $
+    removeFile path
+
+  return path

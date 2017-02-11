@@ -74,6 +74,9 @@ tests:
     - classy-prelude
     - directory
     - lambda-protocol
+    - resourcet
+    - conduit
+    - cereal
     ghc-options:
     - -rtsopts
     - -threaded

@@ -1,6 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE StrictData                 #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Server.TransactionLog
@@ -16,12 +17,18 @@ module Server.TransactionLog
   ( Backend
   , LogMsg(..)
   , TransactionId
+  , LogType(..)
+  , Log(..)
   , save
   , newBackend
+  , logs
+  , initializeHeader
+  , getLastSeqNum
+  , newTransactionId
   ) where
 
 --------------------------------------------------------------------------------
-import System.IO
+import System.IO hiding (print)
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
@@ -42,8 +49,8 @@ newtype TransactionId = TransactionId UUID deriving (Eq, Ord, Show)
 
 --------------------------------------------------------------------------------
 data LogMsg
-  = Prepared TransactionId EventId Int32
-  | Committed TransactionId
+  = Prepared TransactionId EventId Int
+  | Committed Int TransactionId
 
 --------------------------------------------------------------------------------
 data Msg
@@ -53,28 +60,23 @@ data Msg
 --------------------------------------------------------------------------------
 instance Serialize TransactionId where
   get = do
-    bs <- getLazyByteString 16
+    bs <- get
     case fromByteString bs of
       Just uuid -> return $ TransactionId uuid
       Nothing   -> mzero
 
-  put (TransactionId uuid) =
-    put (toByteString uuid)
+  put (TransactionId uuid) = put (toByteString uuid)
 
 --------------------------------------------------------------------------------
 newTransactionId :: IO TransactionId
 newTransactionId = TransactionId <$> nextRandom
 
 --------------------------------------------------------------------------------
-transactionIdSize :: Int
-transactionIdSize = 16
-
---------------------------------------------------------------------------------
 data Backend =
   Backend { _dbName   :: FilePath
           , _dbPush   :: Publish LogMsg
           , _dbChan   :: Chan Msg
-          , _dbSeqNum :: IORef Int32
+          , _dbSeqNum :: IORef Int
           }
 
 --------------------------------------------------------------------------------
@@ -96,6 +98,10 @@ newBackend path pub = do
 --------------------------------------------------------------------------------
 save :: Backend -> StreamName -> [Event] -> IO ()
 save Backend{..} n xs = writeChan _dbChan (DoSave n xs)
+
+--------------------------------------------------------------------------------
+logs :: MonadResource m => Backend -> Source m Log
+logs Backend{..} = sourceLogs _dbName
 
 --------------------------------------------------------------------------------
 worker :: Backend -> IO ()
@@ -127,7 +133,7 @@ doCommit b@Backend{..} tid = do
 
   runResourceT (yield log $$ sinkLogs b)
 
-  publish _dbPush (Committed tid)
+  publish _dbPush (Committed cur tid)
 
 --------------------------------------------------------------------------------
 type LogFlag = Word8
@@ -149,7 +155,7 @@ logFlagSize :: Int
 logFlagSize = 1
 
 --------------------------------------------------------------------------------
-data LogType = Prepare | Commit
+data LogType = Prepare | Commit deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
 instance Serialize LogType where
@@ -169,25 +175,17 @@ logTypeSize = 1
 
 --------------------------------------------------------------------------------
 data Log =
-  Log { logSeqNum      :: Int32
+  Log { logSeqNum      :: Int
       , logType        :: LogType
       , logTransaction :: TransactionId
       , logFlag        :: LogFlag
       , logStream      :: StreamName
       , logData        :: ByteString
-      }
+      } deriving Show
 
 --------------------------------------------------------------------------------
-streamNameSize :: StreamName -> Int
-streamNameSize (StreamName n) = length n
-
---------------------------------------------------------------------------------
-logSize :: Log -> Int
-logSize Log{..} = 1 + logTypeSize
-                    + transactionIdSize
-                    + logFlagSize
-                    + streamNameSize logStream
-                    + length logData
+headerSize :: Num a => a
+headerSize = 8
 
 --------------------------------------------------------------------------------
 instance Serialize Log where
@@ -197,7 +195,7 @@ instance Serialize Log where
         <*> get
         <*> get
         <*> get
-        <*> (remaining >>= getByteString)
+        <*> get
 
   put Log{..} = do
     put logSeqNum
@@ -245,7 +243,7 @@ sourceLogs file = bracketP openHandle hClose sourceFromFile
   where
     openHandle = do
       h <- openBinaryFile file ReadMode
-      hSeek h AbsoluteSeek 4
+      hSeek h AbsoluteSeek headerSize
       return h
 
 --------------------------------------------------------------------------------
@@ -253,14 +251,14 @@ sourceFromFile :: MonadResource m => Handle -> Source m Log
 sourceFromFile h = go
   where
     go = do
-      bs <- liftIO $ hGetSome h 4
+      bs <- liftIO $ hGetSome h headerSize
       unless (null bs) $
-        case runGet (fromIntegral <$> getWord32le) bs of
+        case decode bs of
           Left _    -> fail "Wrong line framing"
           Right siz -> do
             dat <- liftIO $ hGetSome h siz
-            case decode bs of
-              Left _    -> fail "Wrong log format"
+            case decode dat of
+              Left e    -> fail $ show e ++ ": Wrong log format"
               Right log -> do
                 yield log
                 go
@@ -270,7 +268,7 @@ sinkLogs :: MonadResource m => Backend -> Sink Log m ()
 sinkLogs b = bracketP useFile hClose (consumeToFile b)
   where
     useFile = do
-      h <- openBinaryFile (_dbName b) WriteMode
+      h <- openBinaryFile (_dbName b) ReadWriteMode
       hSeek h SeekFromEnd 0
       return h
 
@@ -281,39 +279,44 @@ consumeToFile Backend{..} h = await >>= go
     go Nothing = liftIO $ do
       cur <- readIORef _dbSeqNum
       hSeek h AbsoluteSeek 0
-      hPut h (runPut $ putWord32le (fromIntegral cur))
+      hPut h $ encode cur
       hFlush h
     go (Just log) = do
       liftIO $ do
-        hPut h (runPut (putWord32le $ fromIntegral $ logSize log))
+        hPut h $ encode (0 :: Int)
+        start <- hTell h
         hPut h (encode log)
         hFlush h
+        end <- hTell h
+        hSeek h AbsoluteSeek (start - headerSize)
+        hPut h $ encode (fromIntegral (end-start) :: Int)
+        hFlush h
+        hSeek h AbsoluteSeek end
 
       await >>= go
 
 --------------------------------------------------------------------------------
-loadLastSeqNum :: (MonadCatch m, MonadResource m) => FilePath -> m Int32
+loadLastSeqNum :: (MonadCatch m, MonadResource m) => FilePath -> m Int
 loadLastSeqNum path = do
   (_, h) <- allocate (openBinaryFile path ReadWriteMode) hClose
 
   catchIOError (getLastSeqNum h) $ \e ->
     if isDoesNotExistError e || isUserError e
-    then initializeHeader h
+    then 0 <$ initializeHeader h 0
     else throw e
 
 --------------------------------------------------------------------------------
-getLastSeqNum :: MonadIO m => Handle -> m Int32
+getLastSeqNum :: MonadIO m => Handle -> m Int
 getLastSeqNum h = liftIO $ do
   hSeek h AbsoluteSeek 0
-  bs <- hGetSome h 4
-  case runGet getWord32le bs of
-    Right i -> return $ fromIntegral i
+  bs <- hGetSome h headerSize
+  case decode bs of
+    Right i -> return i
     Left  e -> fail e
 
 --------------------------------------------------------------------------------
-initializeHeader :: MonadIO m => Handle -> m Int32
-initializeHeader h = liftIO $ do
+initializeHeader :: MonadIO m => Handle -> Int -> m ()
+initializeHeader h header = liftIO $ do
   hSeek h AbsoluteSeek 0
-  hPut h (runPut $ putWord32le 0)
+  hPut h (encode header)
   hFlush h
-  return 0

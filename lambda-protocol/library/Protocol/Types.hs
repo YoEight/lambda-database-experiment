@@ -41,7 +41,7 @@ instance Show Data where
 --------------------------------------------------------------------------------
 instance Serialize Data where
   get = Data <$> get
-  put (Data bs) =  put bs
+  put (Data bs) = put bs
 
 --------------------------------------------------------------------------------
 -- | Used to store a set a properties. One example is to be used as 'Event'
@@ -61,18 +61,13 @@ instance Show Properties where
 instance Serialize Properties where
   put (Properties m) =
     for_ (mapToList m) $ \(key, value) -> do
-      putWord32le $ fromIntegral $ olength key
       put $ encodeUtf8 key
-      putWord32le $ fromIntegral $ olength value
       put $ encodeUtf8 value
 
   get =
     let action = do
-          keySize <- fromIntegral <$> getWord32le
-          key     <- decodeUtf8 <$> getBytes keySize
-          valSize <- fromIntegral <$> getWord32le
-          value   <- decodeUtf8 <$> getBytes valSize
-          return (key, value) in
+          (,) <$> fmap decodeUtf8 get
+              <*> fmap decodeUtf8 get in
     (Properties . mapFromList) <$> some action
 
 --------------------------------------------------------------------------------
@@ -109,7 +104,7 @@ instance Hashable EventId where
 --------------------------------------------------------------------------------
 instance Serialize EventId where
   get = do
-    bs <- getLazyByteString 16
+    bs <- get
     case fromByteString bs of
       Just uuid -> return $ EventId uuid
       Nothing   -> mzero
@@ -147,13 +142,9 @@ instance Show StreamName where
 
 --------------------------------------------------------------------------------
 instance Serialize StreamName where
-  get = do
-    siz <- fromIntegral <$> getWord32le
-    isolate siz ((StreamName . decodeUtf8) <$> get)
+  get = (StreamName . decodeUtf8) <$> get
 
-  put (StreamName n) = do
-    putWord32le (fromIntegral $ length n)
-    put $ encodeUtf8 n
+  put (StreamName n) = put $ encodeUtf8 n
 
 --------------------------------------------------------------------------------
 instance IsString StreamName where
@@ -165,13 +156,9 @@ newtype EventType = EventType Text deriving Eq
 
 --------------------------------------------------------------------------------
 instance Serialize EventType where
-  get = do
-    siz <- fromIntegral <$> getWord32le
-    (EventType . decodeUtf8) <$> getByteString siz
+  get = (EventType . decodeUtf8) <$> get
 
-  put (EventType tpe) = do
-    putWord32le (fromIntegral $ length tpe)
-    put (encodeUtf8 tpe)
+  put (EventType tpe) = put $ encodeUtf8 tpe
 
 --------------------------------------------------------------------------------
 eventTypeText :: EventType -> Text
