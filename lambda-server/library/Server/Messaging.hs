@@ -16,11 +16,7 @@ import ClassyPrelude
 import Data.Functor.Contravariant
 
 --------------------------------------------------------------------------------
-newtype Await a = Await { awaitMsgSTM :: STM a }
-
---------------------------------------------------------------------------------
-awaitMsg :: MonadIO m => Await a -> m a
-awaitMsg w = atomically $ awaitMsgSTM w
+newtype Await a = Await { awaitMsg :: IO a }
 
 --------------------------------------------------------------------------------
 instance Functor Await where
@@ -39,18 +35,16 @@ instance Alternative Await where
   Await a <|> Await b = Await (a <|> b)
 
 --------------------------------------------------------------------------------
-newtype Publish a = Publish { publishSTM :: a -> STM () }
+newtype Publish a = Publish { publish :: a -> IO () }
 
 --------------------------------------------------------------------------------
 instance Contravariant Publish where
   contramap f (Publish k) = Publish (k . f)
 
 --------------------------------------------------------------------------------
-publish :: MonadIO m => Publish a -> a -> m ()
-publish p a = atomically $ publishSTM p a
-
---------------------------------------------------------------------------------
 newExchange :: IO (Await a, Publish a)
 newExchange = do
   q <- newTQueueIO
-  return (Await $ readTQueue q, Publish $ writeTQueue q)
+  let reading = atomically $ readTQueue q
+      writing = atomically . writeTQueue q
+  return (Await reading, Publish writing)

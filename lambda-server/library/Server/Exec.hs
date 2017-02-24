@@ -20,6 +20,7 @@ import Protocol.Package
 
 --------------------------------------------------------------------------------
 import Server.Connection
+import Server.Messaging
 import Server.Operation
 import Server.Settings
 import Server.Timer
@@ -118,14 +119,7 @@ exchange env@Env{..} = forever $ do
       incrMsgNum env
 
       for_ (parseOp pkg) $ \(SomeOperation op) -> do
-        outcome <- executeOperation _opExec op
-
-        case outcome of
-          OpSend opPkg ->
-            writeChan _pkgQueue opPkg
-
-          OpNoop ->
-            return ()
+        executeOperation _opExec pub op
 
     Heartbeat num -> do
       cur <- readIORef _msgNum
@@ -146,6 +140,8 @@ exchange env@Env{..} = forever $ do
       scheduleHeartbeat env
 
     Stop -> terminate env
+  where
+    pub = Publish $ writeChan _pkgQueue
 
 --------------------------------------------------------------------------------
 terminate :: Env -> IO ()

@@ -49,7 +49,7 @@ data Operation a =
             }
 
 --------------------------------------------------------------------------------
-data SomeOperation = forall a. SomeOperation (Operation a)
+data SomeOperation = forall a. Typeable a => SomeOperation (Operation a)
 
 --------------------------------------------------------------------------------
 data Response a =

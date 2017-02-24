@@ -1,4 +1,6 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE RecordWildCards           #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Server.Storage
@@ -16,6 +18,8 @@ module Server.Storage
   , ReadResult(..)
   , WriteFailure(..)
   , ReadFailure(..)
+  , SomeStorageMsg(..)
+  , StorageMsg(..)
   , newInMemoryStorage
   , appendStream
   , readStream
@@ -26,13 +30,16 @@ import Data.List.NonEmpty hiding (reverse, length, dropWhile)
 import Data.Monoid
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
-import Data.Hashable
+import           ClassyPrelude
+import           Data.Hashable
 import qualified Data.HashMap.Strict as H
-import Data.Sequence (Seq, (|>), ViewL(..), viewl)
-import Protocol.Types
+import           Data.Sequence (Seq, (|>), ViewL(..), viewl)
+import           Protocol.Operation
+import           Protocol.Types
 
 --------------------------------------------------------------------------------
+import Server.Messaging
+import Server.RequestId
 import Server.Settings
 
 --------------------------------------------------------------------------------
@@ -50,7 +57,11 @@ type Streams = HashMap StreamName Stream
 
 --------------------------------------------------------------------------------
 data Storage =
-  Storage { streamsVar :: TVar Streams }
+  Storage { _setts     :: Settings
+          , _pub       :: Publish SomeStorageMsg
+          , _chan      :: Chan Msg
+          , streamsVar :: TVar Streams
+          }
 
 --------------------------------------------------------------------------------
 data WriteResult a
@@ -62,9 +73,36 @@ data WriteFailure
   = WrongExpectedVersion
 
 --------------------------------------------------------------------------------
-newInMemoryStorage :: Settings -> IO Storage
-newInMemoryStorage _ =
-  Storage <$> newTVarIO mempty
+data Msg
+  = DoAppend (RequestId WriteEventsResp) StreamName
+                                         ExpectedVersion
+                                         (NonEmpty Event)
+  | DoRead (RequestId ReadEventsResp) StreamName Batch
+
+--------------------------------------------------------------------------------
+data SomeStorageMsg =
+  forall a. Typeable a => SomeStorageMsg (RequestId a) (StorageMsg a)
+
+--------------------------------------------------------------------------------
+data StorageMsg a where
+  WriteResult :: WriteResult EventNumber -> StorageMsg WriteEventsResp
+  ReadResult  :: StreamName
+              -> ReadResult [SavedEvent]
+              -> StorageMsg ReadEventsResp
+
+--------------------------------------------------------------------------------
+newInMemoryStorage :: Settings -> Publish SomeStorageMsg -> IO Storage
+newInMemoryStorage setts pub = do
+
+   s <- Storage setts pub <$> newChan
+                          <*> newTVarIO mempty
+
+   let action = do
+         _ <- forkFinally (worker s) $ \_ -> action
+         return ()
+
+   action
+   return s
 
 --------------------------------------------------------------------------------
 assumeExistence :: ExpectedVersion -> Maybe (Maybe EventNumber)
@@ -84,8 +122,40 @@ appendStream :: Storage
              -> StreamName
              -> ExpectedVersion
              -> NonEmpty Event
-             -> IO (WriteResult EventNumber)
-appendStream Storage{..} name ver xs = atomically $ do
+             -> IO (RequestId WriteEventsResp)
+appendStream Storage{..} n e es = do
+  rid <- freshRequestId
+  writeChan _chan (DoAppend rid n e es)
+  return rid
+
+--------------------------------------------------------------------------------
+readStream :: Storage
+           -> StreamName
+           -> Batch
+           -> IO (RequestId ReadEventsResp)
+readStream Storage{..} s b = do
+  rid <- freshRequestId
+  writeChan _chan (DoRead rid s b)
+  return rid
+
+--------------------------------------------------------------------------------
+worker :: Storage -> IO ()
+worker s@Storage{..} = forever (readChan _chan >>= go)
+  where
+    go (DoAppend rid n e es) = do
+      r <- doAppendStream s n e es
+      publish _pub (SomeStorageMsg rid $ WriteResult r)
+    go (DoRead rid n b) = do
+      r <- doReadStream s n b
+      publish _pub (SomeStorageMsg rid $ ReadResult n r)
+
+--------------------------------------------------------------------------------
+doAppendStream :: Storage
+               -> StreamName
+               -> ExpectedVersion
+               -> NonEmpty Event
+               -> IO (WriteResult EventNumber)
+doAppendStream Storage{..} name ver xs = atomically $ do
   streams <- readTVar streamsVar
 
   case canSaveEvents ver name xs streams of
@@ -173,8 +243,8 @@ data ReadFailure
   = StreamNotFound
 
 --------------------------------------------------------------------------------
-readStream :: Storage -> StreamName -> Batch -> IO (ReadResult [SavedEvent])
-readStream Storage{..} name b = atomically $ do
+doReadStream :: Storage -> StreamName -> Batch -> IO (ReadResult [SavedEvent])
+doReadStream Storage{..} name b = atomically $ do
   streams <- readTVar streamsVar
 
   case lookup name streams of

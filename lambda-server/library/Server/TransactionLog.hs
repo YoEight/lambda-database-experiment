@@ -234,7 +234,7 @@ eventToLog Backend{..} tid name = await >>= go True
                      }
 
       yield log
-      publish _dbPush (Prepared tid eventId cur)
+      liftIO $ publish _dbPush (Prepared tid eventId cur)
       go False next
 
 --------------------------------------------------------------------------------

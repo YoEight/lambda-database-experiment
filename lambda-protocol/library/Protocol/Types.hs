@@ -14,7 +14,6 @@ module Protocol.Types where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Data.Hashable
 import Data.Serialize
 import Data.UUID hiding (fromString)
 import Data.UUID.V4
