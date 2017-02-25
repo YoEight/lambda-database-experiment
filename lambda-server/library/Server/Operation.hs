@@ -91,6 +91,7 @@ newOperationExec setts = do
         _ <- forkFinally (worker op) $ \_ -> action
         return ()
 
+  action
   return op
 
 --------------------------------------------------------------------------------

@@ -123,15 +123,15 @@ doCommit :: Backend -> TransactionId -> IO ()
 doCommit b@Backend{..} tid = do
   cur <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
 
-  let log = Log { logSeqNum      = cur
-                , logType        = Commit
-                , logTransaction = tid
-                , logFlag        = noopFlag
-                , logStream      = ""
-                , logData        = ""
-                }
+  let entry = Log { logSeqNum      = cur
+                  , logType        = Commit
+                  , logTransaction = tid
+                  , logFlag        = noopFlag
+                  , logStream      = ""
+                  , logData        = ""
+                  }
 
-  runResourceT (yield log $$ sinkLogs b)
+  runResourceT (yield entry $$ sinkLogs b)
 
   publish _dbPush (Committed cur tid)
 
@@ -151,10 +151,6 @@ transactionEndFlag :: Word8
 transactionEndFlag = 0x08
 
 --------------------------------------------------------------------------------
-logFlagSize :: Int
-logFlagSize = 1
-
---------------------------------------------------------------------------------
 data LogType = Prepare | Commit deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
@@ -168,10 +164,6 @@ instance Serialize LogType where
 
   put Prepare = putWord8 0x00
   put Commit  = putWord8 0x01
-
---------------------------------------------------------------------------------
-logTypeSize :: Int
-logTypeSize = 1
 
 --------------------------------------------------------------------------------
 data Log =
@@ -225,15 +217,15 @@ eventToLog Backend{..} tid name = await >>= go True
                  then tmp * transactionEndFlag
                  else tmp
 
-          log  = Log { logSeqNum      = cur
-                     , logType        = Prepare
-                     , logTransaction = tid
-                     , logFlag        = flag
-                     , logStream      = name
-                     , logData        = encode e
-                     }
+          entry  = Log { logSeqNum      = cur
+                       , logType        = Prepare
+                       , logTransaction = tid
+                       , logFlag        = flag
+                       , logStream      = name
+                       , logData        = encode e
+                       }
 
-      yield log
+      yield entry
       liftIO $ publish _dbPush (Prepared tid eventId cur)
       go False next
 
@@ -258,9 +250,9 @@ sourceFromFile h = go
           Right siz -> do
             dat <- liftIO $ hGetSome h siz
             case decode dat of
-              Left e    -> fail $ show e ++ ": Wrong log format"
-              Right log -> do
-                yield log
+              Left e      -> fail $ show e ++ ": Wrong log format"
+              Right entry -> do
+                yield entry
                 go
 
 --------------------------------------------------------------------------------
@@ -281,11 +273,11 @@ consumeToFile Backend{..} h = await >>= go
       hSeek h AbsoluteSeek 0
       hPut h $ encode cur
       hFlush h
-    go (Just log) = do
+    go (Just entry) = do
       liftIO $ do
         hPut h $ encode (0 :: Int)
         start <- hTell h
-        hPut h (encode log)
+        hPut h (encode entry)
         hFlush h
         end <- hTell h
         hSeek h AbsoluteSeek (start - headerSize)

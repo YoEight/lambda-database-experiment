@@ -108,7 +108,7 @@ scheduleHeartbeatTimeout Env{..} = do
 
 --------------------------------------------------------------------------------
 incrMsgNum :: Env -> IO ()
-incrMsgNum Env{..} = atomicModifyIORef' _msgNum $ \i -> (succ 1, ())
+incrMsgNum Env{..} = atomicModifyIORef' _msgNum $ \i -> (succ i, ())
 
 --------------------------------------------------------------------------------
 exchange :: Env -> IO ()

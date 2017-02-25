@@ -31,7 +31,6 @@ import Data.Monoid
 
 --------------------------------------------------------------------------------
 import           ClassyPrelude
-import           Data.Hashable
 import qualified Data.HashMap.Strict as H
 import           Data.Sequence (Seq, (|>), ViewL(..), viewl)
 import           Protocol.Operation
@@ -103,19 +102,6 @@ newInMemoryStorage setts pub = do
 
    action
    return s
-
---------------------------------------------------------------------------------
-assumeExistence :: ExpectedVersion -> Maybe (Maybe EventNumber)
-assumeExistence StreamExists     = Just Nothing
-assumeExistence (ExactVersion n) = Just $ Just n
-assumeExistence AnyVersion       = Just Nothing
-assumeExistence NoStream         = Nothing
-
---------------------------------------------------------------------------------
-assumeNonExistence :: ExpectedVersion -> Bool
-assumeNonExistence AnyVersion = True
-assumeNonExistence NoStream   = True
-assumeNonExistence _          = False
 
 --------------------------------------------------------------------------------
 appendStream :: Storage

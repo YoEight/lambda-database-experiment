@@ -83,8 +83,8 @@ awaitClientConnection ServerConnection{..} =
                    <*> getHandle
   where
     getHandle = do
-      (handle, _, _) <- accept sock
-      return handle
+      (sockHandle, _, _) <- accept sock
+      return sockHandle
 
 --------------------------------------------------------------------------------
 recv :: ClientConnection -> IO Pkg
