@@ -29,11 +29,23 @@ import Data.Typeable.Internal
 import ClassyPrelude
 
 --------------------------------------------------------------------------------
-newtype Type = Type Fingerprint deriving (Show, Eq, Ord)
+data Type = Type TypeRep Fingerprint
+
+--------------------------------------------------------------------------------
+instance Show Type where
+  show (Type rep _) = "type " <> show rep
+
+--------------------------------------------------------------------------------
+instance Eq Type where
+  Type _ a == Type _ b = a == b
+
+--------------------------------------------------------------------------------
+instance Ord Type where
+  compare (Type _ a) (Type _ b) = compare a b
 
 --------------------------------------------------------------------------------
 instance Hashable Type where
-  hashWithSalt i (Type (Fingerprint b l)) = hashWithSalt i (b, l)
+  hashWithSalt i (Type _ (Fingerprint b l)) = hashWithSalt i (b, l)
 
 --------------------------------------------------------------------------------
 data GetType
@@ -43,11 +55,15 @@ data GetType
 
 --------------------------------------------------------------------------------
 getType :: GetType -> Type
-getType (FromTypeable a) = let TypeRep fp _ _ _ = typeOf a in Type fp
-getType (FromProxy prx)  = let TypeRep fp _ _ _ = typeRep prx in Type fp
+getType (FromTypeable a) = let t@(TypeRep fp _ _ _) = typeOf a in Type t fp
+getType (FromProxy prx)  = let t@(TypeRep fp _ _ _) = typeRep prx in Type t fp
 
 --------------------------------------------------------------------------------
-data HandlerK = forall a. Typeable a => HandlerK (a -> IO ())
+data HandlerK = forall a. Typeable a => HandlerK (Proxy a) (a -> IO ())
+
+--------------------------------------------------------------------------------
+instance Show HandlerK where
+  show (HandlerK prx _) = "Handle " <> show (typeRep prx)
 
 --------------------------------------------------------------------------------
 data Bus =
@@ -55,6 +71,10 @@ data Bus =
 
 --------------------------------------------------------------------------------
 data Message = forall a. Typeable a => Message a
+
+--------------------------------------------------------------------------------
+instance Show Message where
+  show (Message a) = "Message: " <> show (typeOf a)
 
 --------------------------------------------------------------------------------
 toMsg :: Typeable a => a -> Message
@@ -74,9 +94,9 @@ newBus = Bus <$> newIORef mempty
 
 --------------------------------------------------------------------------------
 subscribe :: forall a. Typeable a => Bus -> (a -> IO ()) -> IO ()
-subscribe Bus{..} k = void $ fork $ atomicModifyIORef' _busHandlers $ \m ->
+subscribe Bus{..} k = atomicModifyIORef' _busHandlers $ \m ->
   let tpe  = getType (FromProxy (Proxy :: Proxy a))
-      hdl  = HandlerK k
+      hdl  = HandlerK Proxy k
       next = alterMap $ \input ->
         case input of
           Nothing -> Just (singleton hdl)
@@ -85,17 +105,17 @@ subscribe Bus{..} k = void $ fork $ atomicModifyIORef' _busHandlers $ \m ->
 
 --------------------------------------------------------------------------------
 publish :: Typeable a => Bus -> a -> IO ()
-publish Bus{..} a = void $ fork $ do
+publish Bus{..} a = do
   m <- readIORef _busHandlers
   let tpe = getType (FromTypeable a)
 
   for_ (lookup tpe m) $ \hs ->
-    for_ hs $ \(HandlerK k) -> do
+    for_ hs $ \(HandlerK _ k) -> do
       let Just b = cast a
-      tryAny $ k b
+      k b
 
-  unless (tpe == messageType) $
+  unless (tpe == messageType) $ do
     for_ (lookup messageType m) $ \hs ->
-      for_ hs $ \(HandlerK k) -> do
+      for_ hs $ \(HandlerK _ k) -> do
         let Just b = cast (Message a)
-        tryAny $ k b
+        k b
