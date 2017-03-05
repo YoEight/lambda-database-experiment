@@ -18,6 +18,7 @@ import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
 import Server.Bus
+import Server.Messaging
 
 --------------------------------------------------------------------------------
 data Foo = Foo deriving Show
@@ -28,7 +29,7 @@ spec :: Spec
 spec = do
   specify "subcribe-publish" $ do
     ref <- newIORef (0 :: Int)
-    bus <- newBus
+    bus <- newBus "subscribe-publish"
 
     subscribe bus $ \Foo -> do
       atomicModifyIORef' ref $ \i ->
@@ -47,7 +48,7 @@ spec = do
 
   specify "subcribe-publish-message" $ do
     ref <- newIORef (0 :: Int)
-    bus <- newBus
+    bus <- newBus "subscribe-publish-message"
 
     subscribe bus $ \Foo -> do
       atomicModifyIORef' ref $ \i ->

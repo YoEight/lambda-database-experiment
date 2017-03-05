@@ -19,6 +19,43 @@ import Data.UUID hiding (fromString)
 import Data.UUID.V4
 
 --------------------------------------------------------------------------------
+class FreshId ident where
+  freshId :: MonadIO m => m ident
+
+--------------------------------------------------------------------------------
+newtype Guid = Guid UUID deriving (Eq, Ord)
+
+--------------------------------------------------------------------------------
+guidBytes :: Guid -> ByteString
+guidBytes (Guid u) = toStrict $ toByteString u
+
+--------------------------------------------------------------------------------
+guidFromBytes :: ByteString -> Maybe Guid
+guidFromBytes = fmap Guid . fromByteString . fromStrict
+
+--------------------------------------------------------------------------------
+instance Hashable Guid where
+  hashWithSalt x (Guid i) = hashWithSalt x i
+
+--------------------------------------------------------------------------------
+instance Serialize Guid where
+  get = do
+    bs <- get
+    case fromByteString bs of
+      Just uuid -> return $ Guid uuid
+      Nothing   -> mzero
+
+  put (Guid uuid) = put (toByteString uuid)
+
+--------------------------------------------------------------------------------
+instance Show Guid where
+  show (Guid i) = show i
+
+--------------------------------------------------------------------------------
+instance FreshId Guid where
+  freshId = liftIO (Guid <$> nextRandom)
+
+--------------------------------------------------------------------------------
 newtype Data = Data ByteString deriving Eq
 
 --------------------------------------------------------------------------------
@@ -94,38 +131,21 @@ properties (Properties m) = mapToList m
 
 --------------------------------------------------------------------------------
 -- | Used to identify an event.
-newtype EventId = EventId UUID deriving (Eq, Ord)
+newtype EventId = EventId Guid
+  deriving ( Show
+           , Eq
+           , Ord
+           , Serialize
+           , Hashable
+           )
 
 --------------------------------------------------------------------------------
-instance Hashable EventId where
-  hashWithSalt x (EventId i) = hashWithSalt x i
-
---------------------------------------------------------------------------------
-instance Serialize EventId where
-  get = do
-    bs <- get
-    case fromByteString bs of
-      Just uuid -> return $ EventId uuid
-      Nothing   -> mzero
-
-  put (EventId uuid) = put (toByteString uuid)
+instance FreshId EventId where
+  freshId = EventId <$> freshId
 
 --------------------------------------------------------------------------------
 eventIdBytes :: EventId -> ByteString
-eventIdBytes (EventId uuid) = toStrict $ toByteString uuid
-
---------------------------------------------------------------------------------
-instance Show EventId where
-  show (EventId uuid) = show uuid
-
---------------------------------------------------------------------------------
--- | Generates a fresh 'EventId'.
-freshEventId :: MonadIO m => m EventId
-freshEventId = fmap EventId $ liftIO nextRandom
-
---------------------------------------------------------------------------------
-eventIdByteString :: EventId -> ByteString
-eventIdByteString (EventId uuid) = toStrict $ toByteString uuid
+eventIdBytes (EventId g) = guidBytes g
 
 --------------------------------------------------------------------------------
 -- | Represents a stream name.

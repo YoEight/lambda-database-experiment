@@ -13,17 +13,7 @@
 --
 --------------------------------------------------------------------------------
 module Server.Storage
-  ( Storage
-  , WriteResult(..)
-  , ReadResult(..)
-  , WriteFailure(..)
-  , ReadFailure(..)
-  , SomeStorageMsg(..)
-  , StorageMsg(..)
-  , newInMemoryStorage
-  , appendStream
-  , readStream
-  ) where
+  ( newInMemoryStorage ) where
 
 --------------------------------------------------------------------------------
 import Data.List.NonEmpty hiding (reverse, length, dropWhile)
@@ -37,9 +27,11 @@ import           Protocol.Operation
 import           Protocol.Types
 
 --------------------------------------------------------------------------------
+import Server.Messages
 import Server.Messaging
 import Server.RequestId
 import Server.Settings
+import Server.Types
 
 --------------------------------------------------------------------------------
 data Stream =
@@ -57,19 +49,9 @@ type Streams = HashMap StreamName Stream
 --------------------------------------------------------------------------------
 data Storage =
   Storage { _setts     :: Settings
-          , _pub       :: Publish SomeStorageMsg
-          , _chan      :: Chan Msg
+          , _pub       :: SomePublisher
           , streamsVar :: TVar Streams
           }
-
---------------------------------------------------------------------------------
-data WriteResult a
-  = WriteOk a
-  | WriteFailed WriteFailure
-
---------------------------------------------------------------------------------
-data WriteFailure
-  = WrongExpectedVersion
 
 --------------------------------------------------------------------------------
 data Msg
@@ -79,61 +61,95 @@ data Msg
   | DoRead (RequestId ReadEventsResp) StreamName Batch
 
 --------------------------------------------------------------------------------
-data SomeStorageMsg =
-  forall a. Typeable a => SomeStorageMsg (RequestId a) (StorageMsg a)
+newInMemoryStorage :: (Subscribe provider, Publish publisher)
+                   => Settings
+                   -> provider
+                   -> publisher
+                   -> IO ()
+newInMemoryStorage setts sub pub = do
+  s <- Storage setts (asPublisher pub) <$> newTVarIO mempty
+
+  subscribe sub (onStorageRequest s)
+  subscribe sub (onTransactionLogMsg s)
+
+  -- let action = do
+  --       _ <- forkFinally (worker s) $ \_ -> action
+  --       return ()
+
+  -- action
 
 --------------------------------------------------------------------------------
-data StorageMsg a where
-  WriteResult :: WriteResult EventNumber -> StorageMsg WriteEventsResp
-  ReadResult  :: StreamName
-              -> ReadResult [SavedEvent]
-              -> StorageMsg ReadEventsResp
+onStorageRequest :: Storage -> StorageReqMsg -> IO ()
+onStorageRequest s (StorageReqMsg rid tpe) =
+  case tpe of
+    StorageAppendStream n ver xs ->
+      onAppendStream s rid n ver xs
+    StorageReadStream n b ->
+      onReadStream s rid n b
 
 --------------------------------------------------------------------------------
-newInMemoryStorage :: Settings -> Publish SomeStorageMsg -> IO Storage
-newInMemoryStorage setts pub = do
-
-   s <- Storage setts pub <$> newChan
-                          <*> newTVarIO mempty
-
-   let action = do
-         _ <- forkFinally (worker s) $ \_ -> action
-         return ()
-
-   action
-   return s
+onAppendStream :: Storage
+               -> Guid
+               -> StreamName
+               -> ExpectedVersion
+               -> NonEmpty Event
+               -> IO ()
+onAppendStream _ _ n ver xs = return ()
 
 --------------------------------------------------------------------------------
-appendStream :: Storage
+onReadStream :: Storage
+             -> Guid
              -> StreamName
-             -> ExpectedVersion
-             -> NonEmpty Event
-             -> IO (RequestId WriteEventsResp)
-appendStream Storage{..} n e es = do
-  rid <- freshRequestId
-  writeChan _chan (DoAppend rid n e es)
-  return rid
+             -> Batch
+             -> IO ()
+onReadStream _ _ n b = return ()
 
 --------------------------------------------------------------------------------
-readStream :: Storage
-           -> StreamName
-           -> Batch
-           -> IO (RequestId ReadEventsResp)
-readStream Storage{..} s b = do
-  rid <- freshRequestId
-  writeChan _chan (DoRead rid s b)
-  return rid
+onTransactionLogMsg :: Storage -> TransactionLogMsg -> IO ()
+onTransactionLogMsg s msg =
+  case msg of
+    PreparedWrites tid events next ->
+      onPreparedWrites s tid events next
 
 --------------------------------------------------------------------------------
-worker :: Storage -> IO ()
-worker s@Storage{..} = forever (readChan _chan >>= go)
-  where
-    go (DoAppend rid n e es) = do
-      r <- doAppendStream s n e es
-      publish _pub (SomeStorageMsg rid $ WriteResult r)
-    go (DoRead rid n b) = do
-      r <- doReadStream s n b
-      publish _pub (SomeStorageMsg rid $ ReadResult n r)
+onPreparedWrites :: Storage
+                 -> TransactionId
+                 -> Seq Entry
+                 -> Int
+                 -> IO ()
+onPreparedWrites _ tid events next = return ()
+
+-- --------------------------------------------------------------------------------
+-- appendStream :: Storage
+--              -> StreamName
+--              -> ExpectedVersion
+--              -> NonEmpty Event
+--              -> IO (RequestId WriteEventsResp)
+-- appendStream Storage{..} n e es = do
+--   rid <- freshRequestId
+--   writeChan _chan (DoAppend rid n e es)
+--   return rid
+
+-- --------------------------------------------------------------------------------
+-- readStream :: Storage
+--            -> StreamName
+--            -> Batch
+--            -> IO (RequestId ReadEventsResp)
+-- readStream Storage{..} s b = do
+--   rid <- freshRequestId
+--   writeChan _chan (DoRead rid s b)
+--   return rid
+
+-- --------------------------------------------------------------------------------
+-- worker :: Storage -> IO ()
+-- worker s@Storage{..} = forever (readChan _chan >>= go)
+--   where
+--     go (DoAppend rid n e es) = do
+--       r <- doAppendStream s n e es
+--       publish _pub (SomeStorageMsg rid $ WriteResult r)
+--     go (DoRead rid n b) = do
+--       r <- doReadStream s n b
+--       publish _pub (SomeStorageMsg rid $ ReadResult n r)
 
 --------------------------------------------------------------------------------
 doAppendStream :: Storage
@@ -201,6 +217,9 @@ checkConcurrentConflict usecase stream evts =
 
     Nothing -> if null committedMap
                then AlreadyDone (streamNextNumber stream)
+               -- Bad implementation, checking those maps have the same length
+               -- isn't enough. We need to make sure those contain the same
+               -- event ids too.
                else if length initMap == length committedMap
                     then CanSave stream
                     else Nope
@@ -218,15 +237,6 @@ checkConcurrentConflict usecase stream evts =
       let eid = eventId (savedEvent s) in deleteMap eid m
 
     committedMap = allCommitted streamTail
-
---------------------------------------------------------------------------------
-data ReadResult a
-  = ReadOk EventNumber Bool a
-  | ReadFailed ReadFailure
-
---------------------------------------------------------------------------------
-data ReadFailure
-  = StreamNotFound
 
 --------------------------------------------------------------------------------
 doReadStream :: Storage -> StreamName -> Batch -> IO (ReadResult [SavedEvent])

@@ -1,7 +1,6 @@
-{-# LANGUAGE ExistentialQuantification #-}
 --------------------------------------------------------------------------------
 -- |
--- Module : Server.Messaging
+-- Module : Server.Messages
 -- Copyright : (C) 2017 Yorick Laupa
 -- License : (see the file LICENSE)
 --
@@ -10,66 +9,63 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Server.Messaging
-  ( Publish(..)
-  , Subscribe(..)
-  , Proxy(..)
-  , Message(..)
-  , SomeProvider
-  , SomePublisher
-  , toMsg
-  , fromMsg
-  , asProvider
-  , asPublisher
-  ) where
-
---------------------------------------------------------------------------------
-import Data.Typeable
+module Server.Messages where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.List.NonEmpty
+import Protocol.Package
+import Protocol.Types
 
 --------------------------------------------------------------------------------
-data Message = forall a. Typeable a => Message a
+import Server.Types
 
 --------------------------------------------------------------------------------
-instance Show Message where
-  show (Message a) = "Message: " <> show (typeOf a)
+data StorageReqMsg
+  = StorageReqMsg { storageReqId   :: Guid
+                  , storageReqType :: StorageReqType
+                  }
 
 --------------------------------------------------------------------------------
-toMsg :: Typeable a => a -> Message
-toMsg = Message
+data StorageRespMsg
+  = StorageRespMsg { storageRespId   :: Guid
+                   , storageRespType :: StorageRespType
+                   }
 
 --------------------------------------------------------------------------------
-fromMsg :: Typeable a => Message -> Maybe a
-fromMsg (Message a) = cast a
+data StorageReqType
+  = StorageAppendStream { storageReqName   :: StreamName
+                        , storageReqVer    :: ExpectedVersion
+                        , storageReqEvents :: NonEmpty Event
+                        }
+
+  | StorageReadStream { storageReqName  :: StreamName
+                      , storageReqBatch :: Batch
+                      }
 
 --------------------------------------------------------------------------------
-class Publish p where
-  publish :: Typeable a => p -> a -> IO ()
+data StorageRespType
+  = WriteResult (WriteResult EventNumber)
+  | ReadResult  StreamName (ReadResult [SavedEvent])
 
 --------------------------------------------------------------------------------
-class Subscribe s where
-  subscribe :: Typeable a => s -> (a -> IO ()) -> IO ()
+data TransactionLogMsg
+  = PreparedWrites { pwritesId     :: TransactionId
+                   , pwritesEvents :: Seq Entry
+                   , pwritesNext   :: Int
+                   }
 
 --------------------------------------------------------------------------------
-data SomePublisher = forall p. Publish p => SomePublisher p
+data TcpSend = TcpSend Pkg
 
 --------------------------------------------------------------------------------
-instance Publish SomePublisher where
-  publish (SomePublisher p) a = publish p a
+data RecvPkg = RecvPkg Pkg
 
 --------------------------------------------------------------------------------
-data SomeProvider = forall p. Subscribe p => SomeProvider p
+data Heartbeat = Heartbeat Integer
 
 --------------------------------------------------------------------------------
-instance Subscribe SomeProvider where
-  subscribe (SomeProvider p) a = subscribe p a
+data HeartbeatTimeout = HeartbeatTimeout Integer
 
 --------------------------------------------------------------------------------
-asProvider :: Subscribe s => s -> SomeProvider
-asProvider = SomeProvider
-
---------------------------------------------------------------------------------
-asPublisher :: Publish p => p -> SomePublisher
-asPublisher = SomePublisher
+data Shutdown = Shutdown

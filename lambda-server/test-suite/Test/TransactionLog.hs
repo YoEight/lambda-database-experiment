@@ -20,12 +20,12 @@ import ClassyPrelude
 import Control.Monad.Trans.Resource
 import Data.Conduit
 import Data.Serialize
-import Data.UUID.V4
 import Protocol.Types
 import System.Directory
 import Test.Tasty.Hspec
 
 --------------------------------------------------------------------------------
+import Server.Bus
 import Server.Messaging
 import Server.TransactionLog
 
@@ -33,7 +33,7 @@ import Server.TransactionLog
 freshFilePath :: IO FilePath
 freshFilePath = do
   createDirectoryIfMissing True "trash"
-  pid <- nextRandom
+  (pid :: Guid) <- freshId
   return $ "trash/" ++ show pid ++ ".test"
 
 --------------------------------------------------------------------------------
@@ -41,8 +41,8 @@ spec :: Spec
 spec = do
   specify "transaction-id" $ do
     path <- freshFilePath
-    tid <- newTransactionId
-    writeFile path (encode tid)
+    tid <- freshId
+    writeFile path (encode (tid :: TransactionId))
     bs <- readFile path
 
     decode bs `shouldBe` Right tid
@@ -63,29 +63,31 @@ spec = do
     header `shouldBe` 32
 
   specify "create new" $ do
-    path   <- freshFilePath
-    (_, p) <- newExchange
-    _      <- newBackend path p
+    path <- freshFilePath
+    bus  <- newBus "create-new"
+    _    <- newBackend path bus
 
     return ()
 
   specify "save" $ do
     path <- freshFilePath
-    eid1 <- freshEventId
-    eid2 <- freshEventId
+    eid1 <- freshId
+    eid2 <- freshId
+    chan <- newChan
+    bus  <- newBus "save"
 
-    (w, p) <- newExchange
+    subscribe bus (writeChan chan)
 
     let e1 = Event "type1" eid1 "payload1" Nothing
         e2 = Event "type2" eid2 "payload2" Nothing
 
-    b <- newBackend path p
+    b <- newBackend path bus
 
     save b "save-1" [e1, e2]
 
-    Prepared t1 eeid1 seq1 <- awaitMsg w
-    Prepared t2 eeid2 seq2 <- awaitMsg w
-    Committed _ tt         <- awaitMsg w
+    Prepared t1 eeid1 seq1 <- readChan chan
+    Prepared t2 eeid2 seq2 <- readChan chan
+    Committed _ tt         <- readChan chan
 
     eeid1 `shouldBe` eid1
     eeid2 `shouldBe` eid2
@@ -103,20 +105,22 @@ spec = do
 
   specify "load" $ do
     path <- freshFilePath
-    eid1 <- freshEventId
-    eid2 <- freshEventId
+    eid1 <- freshId
+    eid2 <- freshId
+    bus  <- newBus "load"
+    chan <- newChan
 
-    (w, p) <- newExchange
+    subscribe bus (writeChan chan)
 
     let e1 = Event "type1" eid1 "payload1" Nothing
         e2 = Event "type2" eid2 "payload2" Nothing
 
-    b <- newBackend path p
+    b <- newBackend path bus
 
     save b "load-1" [e1, e2]
 
     let looping = do
-          msg <- awaitMsg w
+          msg <- readChan chan
           case msg of
             Prepared _ _ i -> fmap ((i, Prepare):)looping
             Committed i _  -> return [(i, Commit)]

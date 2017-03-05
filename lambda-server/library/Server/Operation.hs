@@ -15,11 +15,7 @@
 --
 --------------------------------------------------------------------------------
 module Server.Operation
-  ( OperationExec
-  , OpMsg(..)
-  , newOperationExec
-  , executeOperation
-  ) where
+  ( newOperationExec ) where
 
 --------------------------------------------------------------------------------
 import Data.Typeable
@@ -28,122 +24,121 @@ import Data.Typeable
 import ClassyPrelude
 import Protocol.Message
 import Protocol.Operation
-import Protocol.Package
 import Protocol.Types
 
 --------------------------------------------------------------------------------
+import Server.Messages
 import Server.Messaging
-import Server.RequestId
 import Server.Settings
 import Server.Storage
+import Server.Types
 
 --------------------------------------------------------------------------------
 data OperationExec =
-  OperationExec { _storage :: Storage
-                , _chan    :: Chan Msg
-                , _ref     :: IORef Requests
+  OperationExec { _pub :: SomePublisher
+                , _ref :: IORef Requests
                 }
 
 --------------------------------------------------------------------------------
-type Requests = Map SomeRequestId SomeOp
+instance Publish OperationExec where
+  publish OperationExec{..} = publish _pub
 
 --------------------------------------------------------------------------------
-takeReq :: Typeable a
-        => RequestId a
-        -> Requests
-        -> (Publish Pkg, Operation a, Requests)
+type Requests = Map Guid SomeOp
+
+--------------------------------------------------------------------------------
+takeReq :: Typeable a => Guid -> Requests -> Maybe (Requests, Operation a)
 takeReq rid m = do
-  let sid     = SomeRequestId rid
-      Just op = lookup sid m
+  op <- lookup rid m
   case op of
-    SomeOp pub o ->
-      let Just r = cast o in (pub, r, deleteMap sid m)
+    SomeOp o -> (deleteMap rid m,) <$> cast o
 
 --------------------------------------------------------------------------------
 insertReq :: Typeable a
-          => RequestId a
-          -> Publish Pkg
+          => Guid
           -> Operation a
           -> Requests
           -> Requests
-insertReq rid pub op m =
-  insertMap (SomeRequestId rid) (SomeOp pub op) m
+insertReq rid op m =
+  insertMap rid (SomeOp op) m
 
 --------------------------------------------------------------------------------
-data SomeOp = forall a. Typeable a => SomeOp (Publish Pkg) (Operation a)
+data SomeOp = forall a. Typeable a => SomeOp (Operation a)
 
 --------------------------------------------------------------------------------
-data OpMsg = OpSend Pkg
-
---------------------------------------------------------------------------------
-data Msg = StorageMsg SomeStorageMsg
-
---------------------------------------------------------------------------------
-newOperationExec :: Settings -> IO OperationExec
-newOperationExec setts = do
-  chan <- newChan
-  let pubStorage = Publish $ \m -> writeChan chan (StorageMsg m)
-  s <- newInMemoryStorage setts pubStorage
-  r <- newIORef mempty
-
-  let op     = OperationExec s chan r
-      action = do
-        _ <- forkFinally (worker op) $ \_ -> action
-        return ()
-
-  action
-  return op
-
---------------------------------------------------------------------------------
-worker :: OperationExec -> IO ()
-worker OperationExec{..} = forever (readChan _chan >>= go)
-  where
-    go :: Msg -> IO ()
-    go (StorageMsg (SomeStorageMsg rid msg)) = do
-      action <- atomicModifyIORef _ref $ \m ->
-        case msg of
-          WriteResult w ->
-            let (pub, op, m') = takeReq rid m
-                tpe =
-                  case w of
-                    WriteOk num   -> WriteEventsResp num WriteSuccess
-                    WriteFailed e ->
-                      let flag =
-                            case e of
-                              WrongExpectedVersion ->
-                                WriteWrongExpectedVersion in
-                      WriteEventsResp (-1) flag in
-            (m', publish pub $ createRespPkg op tpe)
-
-          ReadResult name r -> do
-            let (pub, op, m') = takeReq rid m
-                tpe =
-                  case r of
-                    ReadOk num eos xs ->
-                      ReadEventsResp name xs ReadSuccess num eos
-                    ReadFailed e ->
-                      let flag =
-                            case e of
-                              StreamNotFound -> ReadNoStream in
-                      ReadEventsResp name [] flag (-1) True
-            (m', publish pub $ createRespPkg op tpe)
-
-      action
-
---------------------------------------------------------------------------------
-executeOperation :: forall a. Typeable a
-                 => OperationExec
-                 -> Publish Pkg
-                 -> Operation a
+newOperationExec :: (Subscribe sub, Publish pub)
+                 => Settings
+                 -> sub
+                 -> pub
                  -> IO ()
-executeOperation OperationExec{..} pub op@Operation{..} = do
-  rid <-
-    case operationType of
-      WriteEvents name ver xs ->
-        appendStream _storage name ver xs
+newOperationExec setts sub pub = do
+  newInMemoryStorage setts sub pub
 
-      ReadEvents name batch ->
-        readStream _storage name batch
+  op <- OperationExec (asPublisher pub) <$> newIORef mempty
 
+  subscribe sub (onOperation op)
+  subscribe sub (onStorageResp op)
+
+--------------------------------------------------------------------------------
+registerOp :: Typeable a => OperationExec -> Operation a -> IO Guid
+registerOp OperationExec{..} op = do
+  rid <- freshId
   atomicModifyIORef' _ref $ \m ->
-    (insertReq rid pub op m, ())
+    (insertReq rid op m, ())
+  return rid
+
+--------------------------------------------------------------------------------
+retrieveOp :: forall a. Typeable a
+           => OperationExec
+           -> Guid
+           -> IO (Maybe (Operation a))
+retrieveOp OperationExec{..} rid =
+  atomicModifyIORef' _ref $ \m ->
+    case takeReq rid m of
+      Just (m', op) -> (m', Just op)
+      Nothing       -> (m, Nothing)
+
+--------------------------------------------------------------------------------
+onOperation :: OperationExec -> SomeOperation -> IO ()
+onOperation ex (SomeOperation op) = do
+  rid <- registerOp ex op
+  let tpe =
+        case operationType op of
+          WriteEvents name ver events ->
+            StorageAppendStream name ver events
+          ReadEvents name batch ->
+            StorageReadStream name batch
+  publish ex (StorageReqMsg rid tpe)
+
+--------------------------------------------------------------------------------
+onStorageResp :: OperationExec -> StorageRespMsg -> IO ()
+onStorageResp ex (StorageRespMsg rid respTpe) =
+  case respTpe of
+    WriteResult w -> do
+      res <- retrieveOp ex rid
+      for_ res $ \op -> do
+        let tpe =
+              case w of
+                WriteOk num   -> WriteEventsResp num WriteSuccess
+                WriteFailed e ->
+                  let flag =
+                        case e of
+                          WrongExpectedVersion ->
+                            WriteWrongExpectedVersion in
+                  WriteEventsResp (-1) flag
+            pkg = createRespPkg op tpe
+        publish ex (TcpSend pkg)
+    ReadResult name r -> do
+      res <- retrieveOp ex rid
+      for_ res $ \op -> do
+        let tpe =
+              case r of
+                ReadOk num eos xs ->
+                  ReadEventsResp name xs ReadSuccess num eos
+                ReadFailed e ->
+                  let flag =
+                        case e of
+                          StreamNotFound -> ReadNoStream in
+                  ReadEventsResp name [] flag (-1) True
+            pkg = createRespPkg op tpe
+        publish ex (TcpSend pkg)

@@ -18,7 +18,6 @@ module Protocol.Message.EventRecord where
 import ClassyPrelude
 import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize
-import Data.UUID
 
 --------------------------------------------------------------------------------
 import Protocol.Types
@@ -52,8 +51,8 @@ toEventRecord (StreamName name) (SavedEvent (EventNumber num) Event{..}) =
 fromEventRecord :: MonadPlus m => EventRecordMsg -> m SavedEvent
 fromEventRecord em = do
   eid <-
-    case fromByteString $ fromStrict $ getField $ eventMsgId em of
-      Just uuid -> return $ EventId uuid
+    case guidFromBytes $  getField $ eventMsgId em of
+      Just guid -> return $ EventId guid
       _         -> mzero
 
   let dat     = Data $ getField $ eventMsgData em

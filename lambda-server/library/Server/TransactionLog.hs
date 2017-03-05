@@ -24,7 +24,6 @@ module Server.TransactionLog
   , logs
   , initializeHeader
   , getLastSeqNum
-  , newTransactionId
   ) where
 
 --------------------------------------------------------------------------------
@@ -37,15 +36,11 @@ import Data.Serialize
 import Data.ByteString (hGetSome)
 import Data.Conduit
 import Data.Conduit.List (sourceList)
-import Data.UUID hiding (null)
-import Data.UUID.V4
 import Protocol.Types
 
 --------------------------------------------------------------------------------
 import Server.Messaging
-
---------------------------------------------------------------------------------
-newtype TransactionId = TransactionId UUID deriving (Eq, Ord, Show)
+import Server.Types
 
 --------------------------------------------------------------------------------
 data LogMsg
@@ -58,35 +53,21 @@ data Msg
   | DoCommit TransactionId
 
 --------------------------------------------------------------------------------
-instance Serialize TransactionId where
-  get = do
-    bs <- get
-    case fromByteString bs of
-      Just uuid -> return $ TransactionId uuid
-      Nothing   -> mzero
-
-  put (TransactionId uuid) = put (toByteString uuid)
-
---------------------------------------------------------------------------------
-newTransactionId :: IO TransactionId
-newTransactionId = TransactionId <$> nextRandom
-
---------------------------------------------------------------------------------
 data Backend =
   Backend { _dbName   :: FilePath
-          , _dbPush   :: Publish LogMsg
+          , _dbPush   :: SomePublisher
           , _dbChan   :: Chan Msg
           , _dbSeqNum :: IORef Int
           }
 
 --------------------------------------------------------------------------------
-newBackend :: FilePath -> Publish LogMsg -> IO Backend
+newBackend :: Publish pub => FilePath -> pub -> IO Backend
 newBackend path pub = do
   let seqNumEff       = runResourceT $ loadLastSeqNum path
       createSeqNumRef = seqNumEff >>= newIORef
 
   c <- newChan
-  b <- Backend path pub c <$> createSeqNumRef
+  b <- Backend path (asPublisher pub) c <$> createSeqNumRef
 
   let action = do
         _ <- forkFinally (worker b) $ \_ -> action
@@ -113,7 +94,7 @@ worker b@Backend{..} = forever (readChan _dbChan >>= go)
 --------------------------------------------------------------------------------
 doSave :: Backend -> StreamName -> [Event] -> IO ()
 doSave b@Backend{..} name evts = do
-  tid <- newTransactionId
+  tid <- freshId
 
   let src = sourceList evts $= eventToLog b tid name
   runResourceT (src $$ sinkLogs b)

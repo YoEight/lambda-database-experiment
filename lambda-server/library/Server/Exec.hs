@@ -19,129 +19,97 @@ import Protocol.Operation
 import Protocol.Package
 
 --------------------------------------------------------------------------------
+import Server.Bus
 import Server.Connection
+import Server.Messages
 import Server.Messaging
 import Server.Operation
+import Server.QueuePublisher
 import Server.Settings
 import Server.Timer
 
 --------------------------------------------------------------------------------
 exec :: Settings -> IO ()
 exec setts = do
-  conn   <- newServerConnection $ connectionSettings setts
-  opExec <- newOperationExec setts
+  conn      <- newServerConnection $ connectionSettings setts
+  mainBus   <- newBus "main-bus"
+  mainQueue <- newQueuePublisher "main-queue" mainBus
+  newOperationExec setts mainBus mainQueue
+
   forever $ do
     client <- awaitClientConnection conn
-    env    <- newEnv setts opExec client
+    env    <- newEnv setts client
 
-    spawn env ReceiverActor
-    spawn env WriterActor
-    scheduleHeartbeat env
+    subscribe mainBus (onReceivePkg env mainQueue)
+    subscribe mainBus (onHeartbeat env mainQueue)
+    subscribe mainBus (onHeartbeatTimeout env mainQueue)
+    subscribe mainBus (onShutdown env)
 
-    fork $ exchange env
+    scheduleHeartbeat env mainQueue
+
+--------------------------------------------------------------------------------
+onReceivePkg :: Publish pub => Env -> pub -> RecvPkg -> IO ()
+onReceivePkg env@Env{..} pub (RecvPkg pkg) = do
+  incrMsgNum env
+
+  for_ (parseOp pkg) $ \op ->
+    publish pub op
+
+--------------------------------------------------------------------------------
+onHeartbeat :: Publish pub => Env -> pub -> Heartbeat -> IO ()
+onHeartbeat env@Env{..} pub (Heartbeat num) = do
+  cur <- readIORef _msgNum
+
+  if cur /= num
+    then scheduleHeartbeat env pub
+    else do
+      pkg <- heartbeatRequest
+      publish pub (TcpSend pkg)
+      scheduleHeartbeatTimeout env pub
+
+--------------------------------------------------------------------------------
+onHeartbeatTimeout :: Publish pub => Env -> pub -> HeartbeatTimeout -> IO ()
+onHeartbeatTimeout env@Env{..} pub (HeartbeatTimeout num) = do
+  cur <- readIORef _msgNum
+
+  when (cur == num) $
+    terminate env
+
+  scheduleHeartbeat env pub
+
+--------------------------------------------------------------------------------
+onShutdown :: Env -> Shutdown -> IO ()
+onShutdown env Shutdown = terminate env
 
 --------------------------------------------------------------------------------
 data Env =
   Env { _conn     :: ClientConnection
-      , _opExec   :: OperationExec
       , _setts    :: Settings
       , _msgNum   :: IORef Integer
-      , _msgQueue :: Chan Msg
-      , _pkgQueue :: Chan Pkg
       }
 
 --------------------------------------------------------------------------------
-newEnv :: Settings -> OperationExec -> ClientConnection -> IO Env
-newEnv setts opExec conn =
-  Env conn opExec setts <$> newIORef 0
-                        <*> newChan
-                        <*> newChan
+newEnv :: Settings -> ClientConnection -> IO Env
+newEnv setts conn =
+  Env conn setts <$> newIORef 0
 
 --------------------------------------------------------------------------------
-data Msg
-  = Recv Pkg
-  | Heartbeat Integer
-  | HeartbeatTimeout Integer
-  | Stop
-
---------------------------------------------------------------------------------
-data ActorType = ReceiverActor | WriterActor
-
---------------------------------------------------------------------------------
-receiver :: Chan Msg -> ClientConnection -> IO ()
-receiver msgQueue c = forever $ do
-  pkg <- recv c
-  writeChan msgQueue (Recv pkg)
-
---------------------------------------------------------------------------------
-writer :: Chan Pkg -> ClientConnection -> IO ()
-writer pkgQueue conn = forever $ do
-  pkg <- readChan pkgQueue
-  send conn pkg
-
---------------------------------------------------------------------------------
-spawn :: Env -> ActorType -> IO ()
-spawn Env{..} tpe = do
-  let action =
-        case tpe of
-          ReceiverActor -> receiver _msgQueue _conn
-          WriterActor   -> writer _pkgQueue _conn
-
-  _ <- forkFinally action $ \_ ->
-         writeChan _msgQueue Stop
-
-  return ()
-
---------------------------------------------------------------------------------
-scheduleHeartbeat :: Env -> IO ()
-scheduleHeartbeat Env{..} = do
+scheduleHeartbeat :: Publish pub => Env -> pub -> IO ()
+scheduleHeartbeat Env{..} pub = do
   num <- readIORef _msgNum
   delayed (heartbeatInterval _setts) $
-    writeChan _msgQueue (Heartbeat num)
+    publish pub (Heartbeat num)
 
 --------------------------------------------------------------------------------
-scheduleHeartbeatTimeout :: Env -> IO ()
-scheduleHeartbeatTimeout Env{..} = do
+scheduleHeartbeatTimeout :: Publish pub => Env -> pub -> IO ()
+scheduleHeartbeatTimeout Env{..} pub = do
   num <- readIORef _msgNum
   delayed (heartbeatTimeout _setts) $
-    writeChan _msgQueue (HeartbeatTimeout num)
+    publish pub (HeartbeatTimeout num)
 
 --------------------------------------------------------------------------------
 incrMsgNum :: Env -> IO ()
 incrMsgNum Env{..} = atomicModifyIORef' _msgNum $ \i -> (succ i, ())
-
---------------------------------------------------------------------------------
-exchange :: Env -> IO ()
-exchange env@Env{..} = forever $ do
-  msg <- readChan _msgQueue
-  case msg of
-    Recv pkg -> do
-      incrMsgNum env
-
-      for_ (parseOp pkg) $ \(SomeOperation op) -> do
-        executeOperation _opExec pub op
-
-    Heartbeat num -> do
-      cur <- readIORef _msgNum
-
-      if cur /= num
-        then scheduleHeartbeat env
-        else do
-          pkg <- heartbeatRequest
-          writeChan _pkgQueue pkg
-          scheduleHeartbeatTimeout env
-
-    HeartbeatTimeout num -> do
-      cur <- readIORef _msgNum
-
-      when (cur == num) $
-        terminate env
-
-      scheduleHeartbeat env
-
-    Stop -> terminate env
-  where
-    pub = Publish $ writeChan _pkgQueue
 
 --------------------------------------------------------------------------------
 terminate :: Env -> IO ()

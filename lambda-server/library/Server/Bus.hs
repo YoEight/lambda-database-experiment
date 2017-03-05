@@ -15,8 +15,6 @@
 module Server.Bus
   ( Bus
   , newBus
-  , subscribe
-  , publish
   , toMsg
   , fromMsg
   ) where
@@ -27,6 +25,9 @@ import Data.Typeable.Internal
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+
+--------------------------------------------------------------------------------
+import Server.Messaging
 
 --------------------------------------------------------------------------------
 data Type = Type TypeRep Fingerprint
@@ -67,34 +68,29 @@ instance Show HandlerK where
 
 --------------------------------------------------------------------------------
 data Bus =
-  Bus { _busHandlers :: IORef (HashMap Type (Seq HandlerK)) }
-
---------------------------------------------------------------------------------
-data Message = forall a. Typeable a => Message a
-
---------------------------------------------------------------------------------
-instance Show Message where
-  show (Message a) = "Message: " <> show (typeOf a)
-
---------------------------------------------------------------------------------
-toMsg :: Typeable a => a -> Message
-toMsg = Message
-
---------------------------------------------------------------------------------
-fromMsg :: Typeable a => Message -> Maybe a
-fromMsg (Message a) = cast a
+  Bus { _busName     :: Text
+      , _busHandlers :: IORef (HashMap Type (Seq HandlerK))
+      }
 
 --------------------------------------------------------------------------------
 messageType :: Type
 messageType = getType (FromProxy (Proxy :: Proxy Message))
 
 --------------------------------------------------------------------------------
-newBus :: IO Bus
-newBus = Bus <$> newIORef mempty
+newBus :: Text -> IO Bus
+newBus name = Bus name <$> newIORef mempty
 
 --------------------------------------------------------------------------------
-subscribe :: forall a. Typeable a => Bus -> (a -> IO ()) -> IO ()
-subscribe Bus{..} k = atomicModifyIORef' _busHandlers $ \m ->
+instance Subscribe Bus where
+  subscribe = _subscribe
+
+--------------------------------------------------------------------------------
+instance Publish Bus where
+  publish = _publish
+
+--------------------------------------------------------------------------------
+_subscribe :: forall a. Typeable a => Bus -> (a -> IO ()) -> IO ()
+_subscribe Bus{..} k = atomicModifyIORef' _busHandlers $ \m ->
   let tpe  = getType (FromProxy (Proxy :: Proxy a))
       hdl  = HandlerK Proxy k
       next = alterMap $ \input ->
@@ -104,8 +100,8 @@ subscribe Bus{..} k = atomicModifyIORef' _busHandlers $ \m ->
   (next tpe m, ())
 
 --------------------------------------------------------------------------------
-publish :: Typeable a => Bus -> a -> IO ()
-publish Bus{..} a = do
+_publish :: Typeable a => Bus -> a -> IO ()
+_publish Bus{..} a = do
   m <- readIORef _busHandlers
   let tpe = getType (FromTypeable a)
 
@@ -117,5 +113,5 @@ publish Bus{..} a = do
   unless (tpe == messageType) $ do
     for_ (lookup messageType m) $ \hs ->
       for_ hs $ \(HandlerK _ k) -> do
-        let Just b = cast (Message a)
+        let Just b = cast (toMsg a)
         k b

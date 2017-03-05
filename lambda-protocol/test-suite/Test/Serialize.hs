@@ -38,12 +38,12 @@ spec = do
     decode bs `shouldBe` (Right $ EventType "type")
 
   specify "EventId" $ do
-    eid <- freshEventId
+    eid <- freshId
     path <- freshFile "eventid"
     writeFile path (encode eid)
     bs <- readFile path
 
-    decode bs `shouldBe` Right eid
+    decode bs `shouldBe` Right (eid :: EventId)
 
   specify "Data" $ do
     path <- freshFile "data"
@@ -63,7 +63,7 @@ spec = do
     decode bs `shouldBe` Right ps
 
   specify "Event" $ do
-    eid <- freshEventId
+    eid <- freshId
     path <- freshFile "event"
     let ps = setProperty "foo" "bar" $
              setProperty "tit" "tot" mempty

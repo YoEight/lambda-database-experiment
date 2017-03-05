@@ -26,7 +26,6 @@ import Data.List.NonEmpty hiding (toList)
 import ClassyPrelude
 import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize hiding (Result)
-import Data.UUID
 
 --------------------------------------------------------------------------------
 import Protocol.Operation
@@ -94,7 +93,7 @@ createPkg pid name ver xs =
                    }
 
     toMsg e =
-      EventMsg { msgId       = putField $ eventIdByteString $ eventId e
+      EventMsg { msgId       = putField $ eventIdBytes $ eventId e
                , msgType     = putField $ eventTypeText $ eventType e
                , msgData     = putField $ dataBytes $ eventPayload e
                , msgMetadata = putField $ fmap encode $ eventMetadata e
@@ -124,8 +123,8 @@ parseOp Pkg{..} =
               xs   = getField $ writeMsgs r
 
               toEvt msg = do
-                eid <- case fromByteString $ fromStrict $ getField $ msgId msg of
-                         Just uuid -> return $ EventId uuid
+                eid <- case guidFromBytes $ getField $ msgId msg of
+                         Just guid -> return $ EventId guid
                          _         -> mzero
 
                 let dat = getField $ msgMetadata msg
