@@ -69,14 +69,8 @@ newInMemoryStorage :: (Subscribe provider, Publish publisher)
 newInMemoryStorage setts sub pub = do
   s <- Storage setts (asPublisher pub) <$> newTVarIO mempty
 
-  subscribe sub (onStorageRequest s)
-  subscribe sub (onTransactionLogMsg s)
-
-  -- let action = do
-  --       _ <- forkFinally (worker s) $ \_ -> action
-  --       return ()
-
-  -- action
+  subscribe_ sub (onStorageRequest s)
+  subscribe_ sub (onTransactionLogMsg s)
 
 --------------------------------------------------------------------------------
 onStorageRequest :: Storage -> StorageReqMsg -> IO ()

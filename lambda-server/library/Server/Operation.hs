@@ -76,8 +76,8 @@ newOperationExec setts sub pub = do
 
   op <- OperationExec (asPublisher pub) <$> newIORef mempty
 
-  subscribe sub (onOperation op)
-  subscribe sub (onStorageResp op)
+  subscribe_ sub (onOperation op)
+  subscribe_ sub (onStorageResp op)
 
 --------------------------------------------------------------------------------
 registerOp :: Typeable a => OperationExec -> Operation a -> IO Guid

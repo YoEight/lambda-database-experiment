@@ -25,6 +25,8 @@ import Data.Typeable.Internal
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Sequence (ViewL(..), viewl)
+import Protocol.Types hiding (singleton)
 
 --------------------------------------------------------------------------------
 import Server.Messaging
@@ -53,18 +55,38 @@ data GetType
   = forall a. Typeable a => FromTypeable a
   | forall a. Typeable a => FromProxy (Proxy a)
 
-
 --------------------------------------------------------------------------------
 getType :: GetType -> Type
 getType (FromTypeable a) = let t@(TypeRep fp _ _ _) = typeOf a in Type t fp
 getType (FromProxy prx)  = let t@(TypeRep fp _ _ _) = typeRep prx in Type t fp
 
 --------------------------------------------------------------------------------
-data HandlerK = forall a. Typeable a => HandlerK (Proxy a) (a -> IO ())
+type Handlers = HashMap Type (Seq HandlerK)
+
+--------------------------------------------------------------------------------
+unregisterTrigger :: forall a. Typeable a => Trigger a -> Handlers -> Handlers
+unregisterTrigger tgr = go (getType (FromProxy (Proxy :: Proxy a)))
+  where
+    go = adjustMap $ \seq ->
+      let _F agg cur =
+            case viewl cur of
+              EmptyL -> agg
+              h@(HandlerK tid _) :< rest
+                | tgrId tid == tgrId tgr -> agg <> rest
+                | otherwise              -> _F (snoc agg h) rest in
+      _F mempty seq
+
+--------------------------------------------------------------------------------
+data HandlerK =
+  forall a. Typeable a =>
+  HandlerK { _handleTrigger :: Trigger a
+           , _handlerKey    :: a -> IO ()
+           }
 
 --------------------------------------------------------------------------------
 instance Show HandlerK where
-  show (HandlerK prx _) = "Handle " <> show (typeRep prx)
+  show (HandlerK (_ :: Trigger a) _) =
+    "Handle " <> show (typeRep (Proxy :: Proxy a))
 
 --------------------------------------------------------------------------------
 data Bus =
@@ -82,22 +104,31 @@ newBus name = Bus name <$> newIORef mempty
 
 --------------------------------------------------------------------------------
 instance Subscribe Bus where
-  subscribe = _subscribe
+  subscribe   = _subscribe
+  unsubscribe = _unsubscribe
 
 --------------------------------------------------------------------------------
 instance Publish Bus where
   publish = _publish
 
 --------------------------------------------------------------------------------
-_subscribe :: forall a. Typeable a => Bus -> (a -> IO ()) -> IO ()
-_subscribe Bus{..} k = atomicModifyIORef' _busHandlers $ \m ->
-  let tpe  = getType (FromProxy (Proxy :: Proxy a))
-      hdl  = HandlerK Proxy k
-      next = alterMap $ \input ->
-        case input of
-          Nothing -> Just (singleton hdl)
-          Just hs -> Just (snoc hs hdl) in
-  (next tpe m, ())
+_subscribe :: forall a. Typeable a => Bus -> (a -> IO ()) -> IO (Trigger a)
+_subscribe Bus{..} k = do
+  tid <- freshId
+  atomicModifyIORef' _busHandlers $ \m ->
+    let tpe  = getType (FromProxy (Proxy :: Proxy a))
+        hdl  = HandlerK tid k
+        next = alterMap $ \input ->
+          case input of
+            Nothing -> Just (singleton hdl)
+            Just hs -> Just (snoc hs hdl) in
+    (next tpe m, ())
+  return tid
+
+--------------------------------------------------------------------------------
+_unsubscribe :: Typeable a => Bus -> Trigger a -> IO ()
+_unsubscribe Bus{..} tgr =
+  atomicModifyIORef' _busHandlers $ \m -> (unregisterTrigger tgr m, ())
 
 --------------------------------------------------------------------------------
 _publish :: Typeable a => Bus -> a -> IO ()
