@@ -57,3 +57,19 @@ data Entry =
   Entry { entryEventId :: EventId
         , entrySeekPos :: SeekPos
         }
+
+--------------------------------------------------------------------------------
+newtype ConnectionId = ConnectionId Guid
+  deriving ( Eq
+           , Ord
+           , Serialize
+           , Hashable
+           )
+
+--------------------------------------------------------------------------------
+instance FreshId ConnectionId where
+  freshId = ConnectionId <$> freshId
+
+--------------------------------------------------------------------------------
+instance Show ConnectionId where
+  show (ConnectionId g) = "connection-" <> show g

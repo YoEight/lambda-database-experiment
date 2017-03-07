@@ -47,23 +47,31 @@ instance Publish OperationExec where
 type Requests = Map Guid SomeOp
 
 --------------------------------------------------------------------------------
-takeReq :: Typeable a => Guid -> Requests -> Maybe (Requests, Operation a)
+takeReq :: Typeable a
+        => Guid
+        -> Requests
+        -> Maybe (Requests, ConnectionId, Operation a)
 takeReq rid m = do
   op <- lookup rid m
   case op of
-    SomeOp o -> (deleteMap rid m,) <$> cast o
+    SomeOp cid o -> (deleteMap rid m, cid,) <$> cast o
 
 --------------------------------------------------------------------------------
 insertReq :: Typeable a
           => Guid
+          -> ConnectionId
           -> Operation a
           -> Requests
           -> Requests
-insertReq rid op m =
-  insertMap rid (SomeOp op) m
+insertReq rid cid op m =
+  insertMap rid (SomeOp cid op) m
 
 --------------------------------------------------------------------------------
-data SomeOp = forall a. Typeable a => SomeOp (Operation a)
+data SomeOp =
+  forall a. Typeable a =>
+  SomeOp { _connId :: ConnectionId
+         , _op     :: Operation a
+         }
 
 --------------------------------------------------------------------------------
 newOperationExec :: (Subscribe sub, Publish pub)
@@ -80,28 +88,32 @@ newOperationExec setts sub pub = do
   subscribe_ sub (onStorageResp op)
 
 --------------------------------------------------------------------------------
-registerOp :: Typeable a => OperationExec -> Operation a -> IO Guid
-registerOp OperationExec{..} op = do
+registerOp :: Typeable a
+           => OperationExec
+           -> ConnectionId
+           -> Operation a
+           -> IO Guid
+registerOp OperationExec{..} cid op = do
   rid <- freshId
   atomicModifyIORef' _ref $ \m ->
-    (insertReq rid op m, ())
+    (insertReq rid cid op m, ())
   return rid
 
 --------------------------------------------------------------------------------
 retrieveOp :: forall a. Typeable a
            => OperationExec
            -> Guid
-           -> IO (Maybe (Operation a))
+           -> IO (Maybe (ConnectionId, Operation a))
 retrieveOp OperationExec{..} rid =
   atomicModifyIORef' _ref $ \m ->
     case takeReq rid m of
-      Just (m', op) -> (m', Just op)
-      Nothing       -> (m, Nothing)
+      Just (m', cid, op) -> (m', Just (cid, op))
+      Nothing            -> (m, Nothing)
 
 --------------------------------------------------------------------------------
-onOperation :: OperationExec -> SomeOperation -> IO ()
-onOperation ex (SomeOperation op) = do
-  rid <- registerOp ex op
+onOperation :: OperationExec -> NewOperation -> IO ()
+onOperation ex (NewOperation cid (SomeOperation op)) = do
+  rid <- registerOp ex cid op
   let tpe =
         case operationType op of
           WriteEvents name ver events ->
@@ -116,7 +128,7 @@ onStorageResp ex (StorageRespMsg rid respTpe) =
   case respTpe of
     WriteResult w -> do
       res <- retrieveOp ex rid
-      for_ res $ \op -> do
+      for_ res $ \(cid, op) -> do
         let tpe =
               case w of
                 WriteOk num   -> WriteEventsResp num WriteSuccess
@@ -127,10 +139,10 @@ onStorageResp ex (StorageRespMsg rid respTpe) =
                             WriteWrongExpectedVersion in
                   WriteEventsResp (-1) flag
             pkg = createRespPkg op tpe
-        publish ex (TcpSend pkg)
+        publish ex (TcpSend cid pkg)
     ReadResult name r -> do
       res <- retrieveOp ex rid
-      for_ res $ \op -> do
+      for_ res $ \(cid, op) -> do
         let tpe =
               case r of
                 ReadOk num eos xs ->
@@ -141,4 +153,4 @@ onStorageResp ex (StorageRespMsg rid respTpe) =
                           StreamNotFound -> ReadNoStream in
                   ReadEventsResp name [] flag (-1) True
             pkg = createRespPkg op tpe
-        publish ex (TcpSend pkg)
+        publish ex (TcpSend cid pkg)

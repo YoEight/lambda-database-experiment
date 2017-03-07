@@ -15,8 +15,9 @@ module Server.Connection
   ( ConnectionSettings(..)
   , ServerConnection
   , ConnectionException(..)
-  , ClientId
   , ClientConnection(..)
+  , ConnectionClosed(..)
+  , NewConnection(..)
   , PortNumber
   , newServerConnection
   , awaitClientConnection
@@ -29,12 +30,20 @@ module Server.Connection
 import           ClassyPrelude
 import qualified Data.ByteString as B
 import           Data.Serialize
-import           Data.UUID
-import           Data.UUID.V4
 import           Network
 
 --------------------------------------------------------------------------------
 import Protocol.Package
+import Protocol.Types
+
+--------------------------------------------------------------------------------
+import Server.Types
+
+--------------------------------------------------------------------------------
+data ConnectionClosed = ConnectionClosed ConnectionId
+
+--------------------------------------------------------------------------------
+data NewConnection = NewConnection ClientConnection
 
 --------------------------------------------------------------------------------
 data ConnectionException
@@ -64,22 +73,15 @@ newServerConnection cs@ConnectionSettings{..} =
   withSocketsDo (ServerConnection cs <$> listenOn (PortNumber portNumber))
 
 --------------------------------------------------------------------------------
-newtype ClientId = ClientId UUID deriving (Eq, Ord, Show)
-
---------------------------------------------------------------------------------
-freshClientId :: IO ClientId
-freshClientId = ClientId <$> nextRandom
-
---------------------------------------------------------------------------------
 data ClientConnection =
-  ClientConnection { clientId :: ClientId
+  ClientConnection { connId    :: ConnectionId
                    , innerConn :: Handle
                    }
 
 --------------------------------------------------------------------------------
 awaitClientConnection :: ServerConnection -> IO ClientConnection
 awaitClientConnection ServerConnection{..} =
-  ClientConnection <$> freshClientId
+  ClientConnection <$> freshId
                    <*> getHandle
   where
     getHandle = do

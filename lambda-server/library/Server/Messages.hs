@@ -15,6 +15,7 @@ module Server.Messages where
 import ClassyPrelude
 import Data.List.NonEmpty
 import Protocol.Package
+import Protocol.Operation
 import Protocol.Types
 
 --------------------------------------------------------------------------------
@@ -56,7 +57,7 @@ data TransactionLogMsg
                    }
 
 --------------------------------------------------------------------------------
-data TcpSend = TcpSend Pkg
+data TcpSend = TcpSend ConnectionId Pkg
 
 --------------------------------------------------------------------------------
 data RecvPkg = RecvPkg Pkg
@@ -69,3 +70,9 @@ data HeartbeatTimeout = HeartbeatTimeout Integer
 
 --------------------------------------------------------------------------------
 data Shutdown = Shutdown
+
+--------------------------------------------------------------------------------
+data SystemInit = SystemInit
+
+--------------------------------------------------------------------------------
+data NewOperation = NewOperation ConnectionId SomeOperation
