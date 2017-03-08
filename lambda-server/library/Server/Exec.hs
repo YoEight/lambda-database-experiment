@@ -36,6 +36,7 @@ exec setts = do
   mainQueue <- newQueuePublisher "main-queue" mainBus
   newOperationExec setts mainBus mainQueue
 
+  subscribe mainBus (onShutdown mvar)
   publish mainQueue SystemInit
 
   takeMVar mvar
@@ -43,21 +44,3 @@ exec setts = do
 --------------------------------------------------------------------------------
 onShutdown :: MVar () -> Shutdown -> IO ()
 onShutdown mvar _ = putMVar mvar ()
-
---------------------------------------------------------------------------------
-data Env =
-  Env { _conn     :: ClientConnection
-      , _setts    :: Settings
-      , _msgNum   :: IORef Integer
-      }
-
---------------------------------------------------------------------------------
-newEnv :: Settings -> ClientConnection -> IO Env
-newEnv setts conn =
-  Env conn setts <$> newIORef 0
-
---------------------------------------------------------------------------------
-terminate :: Env -> IO ()
-terminate Env{..} = do
-  close _conn
-  fail "terminate client connection"

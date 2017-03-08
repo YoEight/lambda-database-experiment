@@ -12,13 +12,20 @@
 module Server.ConnectionManager where
 
 --------------------------------------------------------------------------------
+import Control.Monad.Fix
+
+--------------------------------------------------------------------------------
 import ClassyPrelude
+import Data.Text.Format
 
 --------------------------------------------------------------------------------
 import Server.ClientManager
+import Server.Bus
 import Server.Connection
 import Server.Messages
 import Server.Messaging
+import Server.MultiQueuePublisher
+import Server.QueuePublisher
 import Server.Settings
 import Server.Types
 
@@ -27,9 +34,10 @@ type Connections = HashMap ConnectionId ClientConnection
 
 --------------------------------------------------------------------------------
 data Runtime =
-  Runtime { _runSettings :: Settings
-          , _runMainPub  :: SomePublisher
-          , _runConns    :: IORef Connections
+  Runtime { _runSettings  :: Settings
+          , _runMainPub   :: SomePublisher
+          , _runWorkerPub :: SomePublisher
+          , _runConns     :: IORef Connections
           }
 
 --------------------------------------------------------------------------------
@@ -57,7 +65,7 @@ onNewConnection Runtime{..} (NewConnection conn) = do
   atomicModifyIORef' _runConns $ \m ->
     (insertMap (connId conn) conn m, ())
 
-  newClientManager _runSettings _runMainPub conn
+  newClientManager _runSettings _runWorkerPub conn
 
 --------------------------------------------------------------------------------
 onConnectionClosed :: Runtime -> ConnectionClosed -> IO ()
@@ -82,7 +90,24 @@ connectionManager :: (Subscribe sub, Publish pub)
                   -> pub
                   -> IO ()
 connectionManager setts mainSub mainPub = do
-  run <- Runtime setts (asPublisher mainPub) <$> newIORef mempty
+  count <- newIORef (0 :: Int)
+  run   <- mfix $ \runtime -> do
+    pubs <- replicateM 8 $ do
+      idx <- atomicModifyIORef' count $ \i -> (succ i, i)
+
+      let queueName = toStrict $ format "queue-{}" (Only idx)
+          busName   = toStrict $ format "worker-{}" (Only idx)
+      bus <- newBus busName
+
+      subscribe bus (onTcpSend runtime)
+      asPublisher <$> newQueuePublisher queueName bus
+
+    workersQueue <- newMultiQueuePublisher "workers-queue" pubs
+    let mQueue = asPublisher mainPub
+        wQueue = asPublisher workersQueue
+
+    Runtime setts mQueue wQueue <$> newIORef mempty
+
   subscribe_ mainSub (onNewConnection run)
   subscribe_ mainSub (onConnectionClosed run)
   subscribe_ mainSub (onInit run)
