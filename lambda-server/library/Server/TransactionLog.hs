@@ -15,106 +15,104 @@
 --------------------------------------------------------------------------------
 module Server.TransactionLog
   ( Backend
-  , LogMsg(..)
-  , TransactionId
   , LogType(..)
   , Log(..)
-  , save
   , newBackend
-  , logs
-  , initializeHeader
-  , getLastSeqNum
+  , sourceLogs
   ) where
 
 --------------------------------------------------------------------------------
-import System.IO hiding (print)
+import System.IO hiding (print, putStrLn)
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Control.Monad.State.Strict
 import Control.Monad.Trans.Resource
-import Data.Serialize
+import Data.Serialize hiding (get, put)
 import Data.ByteString (hGetSome)
 import Data.Conduit
 import Data.Conduit.List (sourceList)
+import Data.Acquire
 import Protocol.Types
+import System.Directory
 
 --------------------------------------------------------------------------------
+import Server.Messages
 import Server.Messaging
 import Server.Types
 
 --------------------------------------------------------------------------------
-data LogMsg
-  = Prepared TransactionId EventId Int
-  | Committed Int TransactionId
-
---------------------------------------------------------------------------------
-data Msg
-  = DoSave StreamName [Event]
-  | DoCommit TransactionId
-
---------------------------------------------------------------------------------
 data Backend =
-  Backend { _dbName   :: FilePath
+  Backend { _dbPath   :: FilePath
           , _dbPush   :: SomePublisher
-          , _dbChan   :: Chan Msg
-          , _dbSeqNum :: IORef Int
           }
 
 --------------------------------------------------------------------------------
-newBackend :: Publish pub => FilePath -> pub -> IO Backend
-newBackend path pub = do
-  let seqNumEff       = runResourceT $ loadLastSeqNum path
-      createSeqNumRef = seqNumEff >>= newIORef
+newBackend :: (Subscribe sub, Publish pub)
+           => FilePath
+           -> sub
+           -> pub
+           -> IO ()
+newBackend path sub pub = do
+  let b = Backend path (asPublisher pub)
 
-  c <- newChan
-  b <- Backend path (asPublisher pub) c <$> createSeqNumRef
-
-  let action = do
-        _ <- forkFinally (worker b) $ \_ -> action
-        return ()
-
-  action
-  return b
+  subscribe_ sub (onSystemInit b)
+  subscribe_ sub (onWritePrepares b)
 
 --------------------------------------------------------------------------------
-save :: Backend -> StreamName -> [Event] -> IO ()
-save Backend{..} n xs = writeChan _dbChan (DoSave n xs)
+onSystemInit :: Backend -> SystemInit -> IO ()
+onSystemInit Backend{..} _ = publish _dbPush (Initialized TransactionLog)
 
 --------------------------------------------------------------------------------
-logs :: MonadResource m => Backend -> Source m Log
-logs Backend{..} = sourceLogs _dbName
+writeLogEntry :: Handle -> Log -> IO Int
+writeLogEntry h entry = do
+  pos <- hTell h
+  hPut h $ encode (0 :: Int)
+  start <- hTell h
+  hPut h (encode entry)
+  hFlush h
+  end <- hTell h
+  hSeek h AbsoluteSeek (start - headerSize)
+  let siz = fromIntegral (end - start) :: Int
+  hPut h (encode siz)
+  hFlush h
+  hSeek h AbsoluteSeek end
+  fromIntegral <$> hTell h
 
 --------------------------------------------------------------------------------
-worker :: Backend -> IO ()
-worker b@Backend{..} = forever (readChan _dbChan >>= go)
+onWritePrepares :: Backend -> WritePrepares -> IO ()
+onWritePrepares Backend{..} WritePrepares{..} = runResourceT $ do
+  (_, h) <- allocate (openBinaryFile _dbPath ReadWriteMode) hClose
+  let action = traverse (onEvent h) preparesEvents
+  xs <- evalStateT action (1 :: Int)
+  liftIO $ publish _dbPush (WritePrepared preparesId xs)
   where
-    go (DoSave n xs) = doSave b n xs
-    go (DoCommit t)  = doCommit b t
+    len = length preparesEvents
 
---------------------------------------------------------------------------------
-doSave :: Backend -> StreamName -> [Event] -> IO ()
-doSave b@Backend{..} name evts = do
-  tid <- freshId
+    onEvent h event = do
+      i <- get
+      let isFirst  = i == 0
+          isLast   = i == len
+          initFlag = if isFirst
+                     then transactionBeginFlag
+                     else noopFlag
 
-  let src = sourceList evts $= eventToLog b tid name
-  runResourceT (src $$ sinkLogs b)
+          flag = if isLast
+                 then initFlag * transactionEndFlag
+                 else initFlag
 
---------------------------------------------------------------------------------
-doCommit :: Backend -> TransactionId -> IO ()
-doCommit b@Backend{..} tid = do
-  cur <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
+          entry = Log { logType        = Prepare
+                      , logTransaction = preparesId
+                      , logFlag        = flag
+                      , logEventId     = eventId event
+                      , logStream      = preparesName
+                      , logData        = encode event
+                      }
 
-  let entry = Log { logSeqNum      = cur
-                  , logType        = Commit
-                  , logTransaction = tid
-                  , logFlag        = noopFlag
-                  , logStream      = ""
-                  , logData        = ""
-                  }
-
-  runResourceT (yield entry $$ sinkLogs b)
-
-  publish _dbPush (Committed cur tid)
+      pos <- liftIO $ writeLogEntry h entry
+      return $ Prepared { preparedEventId = eventId event
+                        , preparedPos     = pos
+                        }
 
 --------------------------------------------------------------------------------
 type LogFlag = Word8
@@ -132,92 +130,33 @@ transactionEndFlag :: Word8
 transactionEndFlag = 0x08
 
 --------------------------------------------------------------------------------
-data LogType = Prepare | Commit deriving (Show, Eq)
+data LogType = Prepare | Commit deriving (Show, Eq, Enum, Generic)
 
 --------------------------------------------------------------------------------
-instance Serialize LogType where
-  get = do
-    w <- getWord8
-    case w of
-      0x00 -> return Prepare
-      0x01 -> return Commit
-      _    -> mzero
-
-  put Prepare = putWord8 0x00
-  put Commit  = putWord8 0x01
+instance Serialize LogType
 
 --------------------------------------------------------------------------------
 data Log =
-  Log { logSeqNum      :: Int
-      , logType        :: LogType
-      , logTransaction :: TransactionId
+  Log { logType        :: LogType
+      , logTransaction :: Guid
+      , logEventId     :: EventId
       , logFlag        :: LogFlag
       , logStream      :: StreamName
       , logData        :: ByteString
-      } deriving Show
+      } deriving (Show, Generic)
 
 --------------------------------------------------------------------------------
 headerSize :: Num a => a
 headerSize = 8
 
 --------------------------------------------------------------------------------
-instance Serialize Log where
-  get =
-    Log <$> get
-        <*> get
-        <*> get
-        <*> get
-        <*> get
-        <*> get
-
-  put Log{..} = do
-    put logSeqNum
-    put logType
-    put logTransaction
-    put logFlag
-    put logStream
-    put logData
-
---------------------------------------------------------------------------------
-eventToLog :: MonadIO m
-           => Backend
-           -> TransactionId
-           -> StreamName
-           -> Conduit Event m Log
-eventToLog Backend{..} tid name = await >>= go True
-  where
-    go _ Nothing                  = liftIO $ writeChan _dbChan (DoCommit tid)
-    go isFirst (Just e@Event{..}) = do
-      next <- await
-      cur  <- liftIO $ atomicModifyIORef' _dbSeqNum $ \i -> (i+1, i)
-      let tmp  = if isFirst
-                 then transactionBeginFlag
-                 else noopFlag
-
-          flag = if isNothing next
-                 then tmp * transactionEndFlag
-                 else tmp
-
-          entry  = Log { logSeqNum      = cur
-                       , logType        = Prepare
-                       , logTransaction = tid
-                       , logFlag        = flag
-                       , logStream      = name
-                       , logData        = encode e
-                       }
-
-      yield entry
-      liftIO $ publish _dbPush (Prepared tid eventId cur)
-      go False next
+instance Serialize Log
 
 --------------------------------------------------------------------------------
 sourceLogs :: MonadResource m => FilePath -> Source m Log
 sourceLogs file = bracketP openHandle hClose sourceFromFile
   where
-    openHandle = do
-      h <- openBinaryFile file ReadMode
-      hSeek h AbsoluteSeek headerSize
-      return h
+    openHandle = openBinaryFile file ReadMode
 
 --------------------------------------------------------------------------------
 sourceFromFile :: MonadResource m => Handle -> Source m Log
@@ -235,61 +174,3 @@ sourceFromFile h = go
               Right entry -> do
                 yield entry
                 go
-
---------------------------------------------------------------------------------
-sinkLogs :: MonadResource m => Backend -> Sink Log m ()
-sinkLogs b = bracketP useFile hClose (consumeToFile b)
-  where
-    useFile = do
-      h <- openBinaryFile (_dbName b) ReadWriteMode
-      hSeek h SeekFromEnd 0
-      return h
-
---------------------------------------------------------------------------------
-consumeToFile :: MonadResource m => Backend -> Handle -> Sink Log m ()
-consumeToFile Backend{..} h = await >>= go
-  where
-    go Nothing = liftIO $ do
-      cur <- readIORef _dbSeqNum
-      hSeek h AbsoluteSeek 0
-      hPut h $ encode cur
-      hFlush h
-    go (Just entry) = do
-      liftIO $ do
-        hPut h $ encode (0 :: Int)
-        start <- hTell h
-        hPut h (encode entry)
-        hFlush h
-        end <- hTell h
-        hSeek h AbsoluteSeek (start - headerSize)
-        hPut h $ encode (fromIntegral (end-start) :: Int)
-        hFlush h
-        hSeek h AbsoluteSeek end
-
-      await >>= go
-
---------------------------------------------------------------------------------
-loadLastSeqNum :: (MonadCatch m, MonadResource m) => FilePath -> m Int
-loadLastSeqNum path = do
-  (_, h) <- allocate (openBinaryFile path ReadWriteMode) hClose
-
-  catchIOError (getLastSeqNum h) $ \e ->
-    if isDoesNotExistError e || isUserError e
-    then 0 <$ initializeHeader h 0
-    else throw e
-
---------------------------------------------------------------------------------
-getLastSeqNum :: MonadIO m => Handle -> m Int
-getLastSeqNum h = liftIO $ do
-  hSeek h AbsoluteSeek 0
-  bs <- hGetSome h headerSize
-  case decode bs of
-    Right i -> return i
-    Left  e -> fail e
-
---------------------------------------------------------------------------------
-initializeHeader :: MonadIO m => Handle -> Int -> m ()
-initializeHeader h header = liftIO $ do
-  hSeek h AbsoluteSeek 0
-  hPut h (encode header)
-  hFlush h

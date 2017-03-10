@@ -73,3 +73,9 @@ instance FreshId ConnectionId where
 --------------------------------------------------------------------------------
 instance Show ConnectionId where
   show (ConnectionId g) = "connection-" <> show g
+
+--------------------------------------------------------------------------------
+data Prepared =
+  Prepared { preparedEventId :: EventId
+           , preparedPos     :: Int
+           }

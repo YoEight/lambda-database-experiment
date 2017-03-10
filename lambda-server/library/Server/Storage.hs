@@ -16,7 +16,7 @@ module Server.Storage
   ( newInMemoryStorage ) where
 
 --------------------------------------------------------------------------------
-import Data.List.NonEmpty hiding (reverse, length, dropWhile)
+import Data.List.NonEmpty hiding (reverse, length, dropWhile, toList)
 import Data.Monoid
 
 --------------------------------------------------------------------------------
@@ -88,7 +88,14 @@ onAppendStream :: Storage
                -> ExpectedVersion
                -> NonEmpty Event
                -> IO ()
-onAppendStream _ _ n ver xs = return ()
+onAppendStream Storage{..} gid n ver xs =
+  publish _pub msg
+  where
+    msg = WritePrepares { preparesEvents  = toList xs
+                        , preparesVersion = ver
+                        , preparesId      = gid
+                        , preparesName    = n
+                        }
 
 --------------------------------------------------------------------------------
 onReadStream :: Storage

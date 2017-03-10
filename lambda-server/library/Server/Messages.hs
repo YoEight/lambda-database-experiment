@@ -75,4 +75,29 @@ data Shutdown = Shutdown
 data SystemInit = SystemInit
 
 --------------------------------------------------------------------------------
+data ServiceName
+  = TransactionLog
+  deriving (Enum, Show)
+
+--------------------------------------------------------------------------------
+data Initialized = Initialized ServiceName
+
+--------------------------------------------------------------------------------
+data SystemInitFailure = SystemInitFailure ServiceName SomeException
+
+--------------------------------------------------------------------------------
 data NewOperation = NewOperation ConnectionId SomeOperation
+
+--------------------------------------------------------------------------------
+data WritePrepares =
+  WritePrepares { preparesEvents  :: [Event]
+                , preparesVersion :: ExpectedVersion
+                , preparesId      :: Guid
+                , preparesName    :: StreamName
+                }
+
+--------------------------------------------------------------------------------
+data WritePrepared =
+  WritePrepared { preparedId     :: Guid
+                , preparedEvents :: [Prepared]
+                }

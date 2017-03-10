@@ -10,6 +10,7 @@ default-extensions:
     - TupleSections
     - ScopedTypeVariables
     - RecordWildCards
+    - DeriveGeneric
 benchmarks:
   lambda-server-benchmarks:
     dependencies:
@@ -63,6 +64,8 @@ library:
     - resourcet
     - contravariant
     - text-format
+    - directory
+    - mtl
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

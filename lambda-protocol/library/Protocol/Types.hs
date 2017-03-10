@@ -279,3 +279,9 @@ data ReadResultFlag
   = ReadSuccess
   | ReadNoStream
   deriving (Eq, Enum, Show)
+
+--------------------------------------------------------------------------------
+data Position =
+  Position { preparePos :: Int
+           , commitPos  :: Int
+           }
