@@ -12,6 +12,9 @@
 module Server.Settings where
 
 --------------------------------------------------------------------------------
+import ClassyPrelude
+
+--------------------------------------------------------------------------------
 import Server.Connection
 import Server.Timer
 
@@ -20,4 +23,5 @@ data Settings =
   Settings { connectionSettings :: ConnectionSettings
            , heartbeatInterval  :: Duration
            , heartbeatTimeout   :: Duration
+           , dbFile             :: FilePath
            }

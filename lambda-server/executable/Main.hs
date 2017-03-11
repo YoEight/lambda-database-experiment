@@ -47,6 +47,7 @@ parseGeneralSettings =
   Settings <$> parseConnectionSettings
            <*> parseHeartbeatInterval
            <*> parseHeartbeatTimeout
+           <*> parseDbFile
 
 --------------------------------------------------------------------------------
 parseConnectionSettings :: Parser ConnectionSettings
@@ -103,6 +104,15 @@ durationReader input =
   case readMay input of
     Nothing -> Left "Invalid duration"
     Just ms -> Right $ msDuration ms
+
+--------------------------------------------------------------------------------
+parseDbFile :: Parser String
+parseDbFile = strOption go
+  where
+    go = long "db" <> metavar "DB_FILE"
+                   <> help "Database file"
+                   <> value "store.db"
+                   <> showDefault
 
 --------------------------------------------------------------------------------
 main :: IO ()

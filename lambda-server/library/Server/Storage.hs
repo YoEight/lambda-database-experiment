@@ -31,6 +31,7 @@ import Server.Messages
 import Server.Messaging
 import Server.RequestId
 import Server.Settings
+import Server.TransactionLog
 import Server.Types
 
 --------------------------------------------------------------------------------
@@ -68,6 +69,8 @@ newInMemoryStorage :: (Subscribe provider, Publish publisher)
                    -> IO ()
 newInMemoryStorage setts sub pub = do
   s <- Storage setts (asPublisher pub) <$> newTVarIO mempty
+
+  newBackend (dbFile setts) sub pub
 
   subscribe_ sub (onStorageRequest s)
   subscribe_ sub (onTransactionLogMsg s)
