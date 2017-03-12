@@ -13,6 +13,7 @@ module Server.Settings where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import System.Log.FastLogger
 
 --------------------------------------------------------------------------------
 import Server.Connection
@@ -24,4 +25,9 @@ data Settings =
            , heartbeatInterval  :: Duration
            , heartbeatTimeout   :: Duration
            , dbFile             :: FilePath
+           , loggerSettings     :: LoggerSettings
            }
+
+--------------------------------------------------------------------------------
+data LoggerSettings =
+  LoggerSettings { loggerType :: LogType }

@@ -14,8 +14,9 @@
 module Main where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude hiding ((<>))
+import ClassyPrelude
 import Options.Applicative
+import System.Log.FastLogger hiding (check)
 
 --------------------------------------------------------------------------------
 import Server.Connection
@@ -48,6 +49,7 @@ parseGeneralSettings =
            <*> parseHeartbeatInterval
            <*> parseHeartbeatTimeout
            <*> parseDbFile
+           <*> parseLoggerSettings
 
 --------------------------------------------------------------------------------
 parseConnectionSettings :: Parser ConnectionSettings
@@ -113,6 +115,49 @@ parseDbFile = strOption go
                    <> help "Database file"
                    <> value "store.db"
                    <> showDefault
+
+--------------------------------------------------------------------------------
+parseLoggerSettings :: Parser LoggerSettings
+parseLoggerSettings = go <$> parseLogOutput <*> parseLogBufSize
+  where
+    go tpe bufSize =
+      let logType =
+            case strToLogType tpe of
+              LogStdout _            -> LogStdout bufSize
+              LogStderr _            -> LogStderr bufSize
+              LogFileNoRotate path _ -> LogFileNoRotate path bufSize
+              LogFile spec _         -> LogFile spec bufSize
+              l                      -> l in
+      LoggerSettings logType
+
+--------------------------------------------------------------------------------
+parseLogOutput :: Parser String
+parseLogOutput = strOption go
+  where
+    go = long "log-output" <> metavar "LOG_OUTPUT"
+                           <> help "Output of logging"
+                           <> value "stdout"
+                           <> showDefault
+
+--------------------------------------------------------------------------------
+parseLogBufSize :: Parser Int
+parseLogBufSize = option (eitherReader check) go
+  where
+    go = long "log-buf-size" <> metavar "LOG_BUF_SIZE"
+                             <> help "Logging buffer size"
+                             <> value 0
+                             <> showDefault
+    check str =
+      case readMay str of
+        Just i -> Right i
+        _      -> Left $ "Logging buffer size should be an integer ["
+                       <> str <> "]"
+
+--------------------------------------------------------------------------------
+strToLogType :: String -> LogType
+strToLogType "stdout" = LogStdout 0
+strToLogType "stderr" = LogStderr 0
+strToLogType path     = LogFileNoRotate path 0
 
 --------------------------------------------------------------------------------
 main :: IO ()

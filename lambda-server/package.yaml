@@ -34,6 +34,7 @@ executables:
     - lambda-server
     - optparse-applicative
     - classy-prelude
+    - fast-logger
     ghc-options:
     - -rtsopts
     - -threaded
@@ -66,6 +67,7 @@ library:
     - text-format
     - directory
     - mtl
+    - fast-logger
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
