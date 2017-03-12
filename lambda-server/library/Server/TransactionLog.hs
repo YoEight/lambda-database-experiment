@@ -31,10 +31,7 @@ import Control.Monad.Trans.Resource
 import Data.Serialize hiding (get, put)
 import Data.ByteString (hGetSome)
 import Data.Conduit
-import Data.Conduit.List (sourceList)
-import Data.Acquire
 import Protocol.Types
-import System.Directory
 
 --------------------------------------------------------------------------------
 import Server.Messages
@@ -77,7 +74,7 @@ writeLogEntry h entry = do
   hPut h (encode siz)
   hFlush h
   hSeek h AbsoluteSeek end
-  fromIntegral <$> hTell h
+  return $ fromIntegral pos
 
 --------------------------------------------------------------------------------
 onWritePrepares :: Backend -> WritePrepares -> IO ()

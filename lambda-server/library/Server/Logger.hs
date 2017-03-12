@@ -24,7 +24,6 @@ import ClassyPrelude
 import Data.Text.Format
 import Data.Text.Format.Params
 import System.Log.FastLogger
-import System.Log.FastLogger.Date
 
 --------------------------------------------------------------------------------
 import Server.Settings
