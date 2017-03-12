@@ -76,8 +76,11 @@ data SystemInit = SystemInit
 
 --------------------------------------------------------------------------------
 data ServiceName
-  = TransactionLog
-  deriving (Enum, Show)
+  = TransactionLogService
+  | StorageService
+  | OperationService
+  | ConnectionService
+  deriving (Show, Eq, Ord, Enum, Bounded)
 
 --------------------------------------------------------------------------------
 data Initialized = Initialized ServiceName

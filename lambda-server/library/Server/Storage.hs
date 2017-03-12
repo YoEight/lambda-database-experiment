@@ -72,8 +72,13 @@ newInMemoryStorage setts sub pub = do
 
   newBackend (dbFile setts) sub pub
 
+  subscribe_ sub (onSystemInit s)
   subscribe_ sub (onStorageRequest s)
   subscribe_ sub (onTransactionLogMsg s)
+
+--------------------------------------------------------------------------------
+onSystemInit :: Storage -> SystemInit -> IO ()
+onSystemInit Storage{..} _ = publish _pub (Initialized StorageService)
 
 --------------------------------------------------------------------------------
 onStorageRequest :: Storage -> StorageReqMsg -> IO ()

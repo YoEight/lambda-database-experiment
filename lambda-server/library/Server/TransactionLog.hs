@@ -61,7 +61,7 @@ newBackend path sub pub = do
 
 --------------------------------------------------------------------------------
 onSystemInit :: Backend -> SystemInit -> IO ()
-onSystemInit Backend{..} _ = publish _dbPush (Initialized TransactionLog)
+onSystemInit Backend{..} _ = publish _dbPush (Initialized TransactionLogService)
 
 --------------------------------------------------------------------------------
 writeLogEntry :: Handle -> Log -> IO Int

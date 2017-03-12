@@ -51,13 +51,13 @@ listeningWorker Runtime{..} conn = forever $ do
   publish _runMainPub (NewConnection client)
 
 --------------------------------------------------------------------------------
-onInit :: Runtime -> SystemInit -> IO ()
-onInit run@Runtime{..} _ = do
+onSystemInit :: Runtime -> SystemInit -> IO ()
+onSystemInit run@Runtime{..} _ = do
   conn <- newServerConnection $ connectionSettings _runSettings
   _    <- forkFinally (listeningWorker run conn) $ \_ ->
             publish _runMainPub Shutdown
 
-  return ()
+  publish _runMainPub (Initialized ConnectionService)
 
 --------------------------------------------------------------------------------
 onNewConnection :: Runtime -> NewConnection -> IO ()
@@ -110,4 +110,4 @@ connectionManager setts mainSub mainPub = do
 
   subscribe_ mainSub (onNewConnection run)
   subscribe_ mainSub (onConnectionClosed run)
-  subscribe_ mainSub (onInit run)
+  subscribe_ mainSub (onSystemInit run)

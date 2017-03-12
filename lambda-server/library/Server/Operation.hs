@@ -84,8 +84,13 @@ newOperationExec setts sub pub = do
 
   op <- OperationExec (asPublisher pub) <$> newIORef mempty
 
+  subscribe_ sub (onSystemInit op)
   subscribe_ sub (onOperation op)
   subscribe_ sub (onStorageResp op)
+
+--------------------------------------------------------------------------------
+onSystemInit :: OperationExec -> SystemInit -> IO ()
+onSystemInit op _ = publish op (Initialized OperationService)
 
 --------------------------------------------------------------------------------
 registerOp :: Typeable a

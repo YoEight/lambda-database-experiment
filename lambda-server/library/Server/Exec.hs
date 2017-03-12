@@ -28,19 +28,41 @@ import Server.QueuePublisher
 import Server.Settings
 
 --------------------------------------------------------------------------------
+type ServicePendingInit = Map ServiceName ()
+
+--------------------------------------------------------------------------------
 exec :: Settings -> IO ()
 exec setts = do
   mvar      <- newEmptyMVar
   conn      <- newServerConnection $ connectionSettings setts
   mainBus   <- newBus "main-bus"
   mainQueue <- newQueuePublisher "main-queue" mainBus
+  initMap   <- newIORef initPendingMap
   newOperationExec setts mainBus mainQueue
 
   subscribe mainBus (onShutdown mvar)
+  subscribe mainBus (onInitialized initMap )
+
   publish mainQueue SystemInit
 
   takeMVar mvar
 
 --------------------------------------------------------------------------------
+initPendingMap :: ServicePendingInit
+initPendingMap = foldMap go [minBound..]
+  where
+    go i = singletonMap i ()
+
+--------------------------------------------------------------------------------
 onShutdown :: MVar () -> Shutdown -> IO ()
 onShutdown mvar _ = putMVar mvar ()
+
+--------------------------------------------------------------------------------
+onInitialized :: IORef ServicePendingInit -> Initialized -> IO ()
+onInitialized ref (Initialized svc) = do
+  initialized <- atomicModifyIORef' ref $ \m ->
+    let m' = deleteMap svc m in
+    (m', null m')
+
+  when initialized $
+    say "System properly initialized"
