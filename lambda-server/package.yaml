@@ -68,6 +68,8 @@ library:
     - directory
     - mtl
     - fast-logger
+    - time
+    - safe
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
@@ -89,6 +91,7 @@ tests:
     - resourcet
     - conduit
     - cereal
+    - tasty-hspec
     ghc-options:
     - -rtsopts
     - -threaded

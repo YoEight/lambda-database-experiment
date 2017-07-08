@@ -216,7 +216,7 @@ instance Serialize Event where
 
 --------------------------------------------------------------------------------
 -- | Represents an event index in a stream.
-newtype EventNumber = EventNumber Int32 deriving (Eq, Ord, Num, Enum, Show)
+newtype EventNumber = EventNumber Int deriving (Eq, Ord, Num, Enum, Show)
 
 --------------------------------------------------------------------------------
 instance Serialize EventNumber where

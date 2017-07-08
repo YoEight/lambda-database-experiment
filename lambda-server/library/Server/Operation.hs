@@ -80,7 +80,7 @@ newOperationExec :: (Subscribe sub, Publish pub)
                  -> pub
                  -> IO ()
 newOperationExec setts sub pub = do
-  newInMemoryStorage setts sub pub
+  newStorage setts sub pub
 
   op <- OperationExec (asPublisher pub) <$> newIORef mempty
 
@@ -119,13 +119,18 @@ retrieveOp OperationExec{..} rid =
 onOperation :: OperationExec -> NewOperation -> IO ()
 onOperation ex (NewOperation cid (SomeOperation op)) = do
   rid <- registerOp ex cid op
-  let tpe =
-        case operationType op of
-          WriteEvents name ver events ->
-            StorageAppendStream name ver events
-          ReadEvents name batch ->
-            StorageReadStream name batch
-  publish ex (StorageReqMsg rid tpe)
+  case operationType op of
+    WriteEvents name ver events -> do
+      let msg = WritePrepares { preparesEvents  = toList events
+                              , preparesVersion = ver
+                              , preparesId      = rid
+                              , preparesName    = name
+                              }
+
+      publish ex msg
+    ReadEvents name batch -> do
+      let tpe = StorageReadStream name batch
+      publish ex (StorageReqMsg rid tpe)
 
 --------------------------------------------------------------------------------
 onStorageResp :: OperationExec -> StorageRespMsg -> IO ()
