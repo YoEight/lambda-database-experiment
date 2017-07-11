@@ -28,10 +28,13 @@ executables:
     source-dirs: executable
 dependencies:
   - classy-prelude
+  - optparse-applicative
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase
   - OverloadedStrings
+  - TypeFamilies
+  - GADTs
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md
@@ -43,6 +46,7 @@ github: YoEight/lambda-node
 library:
   dependencies:
   - base
+  - network
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
