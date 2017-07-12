@@ -10,7 +10,12 @@
 --
 --------------------------------------------------------------------------------
 module Lambda.Node.Prelude
-  ( module ClassyPrelude ) where
+  ( module ClassyPrelude
+  , module Control.Monad.Logger
+  , module Control.Monad.Logger.CallStack
+  ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
+import Control.Monad.Logger hiding (logDebug, logInfo, logWarn, logError)
+import Control.Monad.Logger.CallStack

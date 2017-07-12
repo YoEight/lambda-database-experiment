@@ -18,6 +18,8 @@ import Data.Typeable
 import Data.Typeable.Internal
 
 --------------------------------------------------------------------------------
+import Lambda.Node.Logger
+import Lambda.Node.Monitoring
 import Lambda.Node.Prelude
 import Lambda.Node.Settings
 
@@ -123,8 +125,10 @@ getType op = Type t (typeRepFingerprint t)
 --------------------------------------------------------------------------------
 data Env =
   Env
-  { _envPub      :: Publish
-  , _envSettings :: Settings
+  { _envPub        :: Publish
+  , _envSettings   :: Settings
+  , _envLogger     :: LoggerRef
+  , _envMonitoring :: Monitoring
   }
 
 --------------------------------------------------------------------------------
@@ -151,3 +155,50 @@ instance MonadBaseControl IO Server where
       s   <- liftIO $ run (\m -> runReaderT (unServer m) env)
       restoreM s
     restoreM = return
+
+--------------------------------------------------------------------------------
+instance MonadLogger Server where
+  monadLoggerLog loc src lvl msg  = do
+    loggerRef <- _envLogger <$> getEnv
+    liftIO $ loggerCallback loggerRef loc src lvl (toLogStr msg)
+
+--------------------------------------------------------------------------------
+instance MonadLoggerIO Server where
+  askLoggerIO = do
+    loggerRef <- _envLogger <$> getEnv
+    return (loggerCallback loggerRef)
+
+--------------------------------------------------------------------------------
+getEnv :: Server Env
+getEnv = Server ask
+
+--------------------------------------------------------------------------------
+getSettings :: Server Settings
+getSettings = _envSettings <$> getEnv
+
+--------------------------------------------------------------------------------
+getMonitoring :: Server Monitoring
+getMonitoring = _envMonitoring <$> getEnv
+
+--------------------------------------------------------------------------------
+publish :: Typeable a => a -> Server ()
+publish a = do
+  bus <- _envPub <$> getEnv
+  publishWith bus a
+
+--------------------------------------------------------------------------------
+publishWith :: (Pub p, Typeable a, MonadIO m) => p -> a -> m ()
+publishWith p a = atomically $ do
+  _ <- publishSTM p a
+  return ()
+
+--------------------------------------------------------------------------------
+runServer :: Pub p
+          => LoggerRef
+          -> Settings
+          -> Monitoring
+          -> p
+          -> Server a
+          -> IO a
+runServer ref setts m pub (Server action) =
+  runReaderT action (Env (asPub pub) setts ref m)

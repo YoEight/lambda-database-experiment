@@ -29,6 +29,10 @@ executables:
 dependencies:
   - classy-prelude
   - optparse-applicative
+  - monad-logger
+  - fast-logger
+  - ekg
+  - ekg-core
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase
@@ -37,6 +41,7 @@ default-extensions:
   - GADTs
   - GeneralizedNewtypeDeriving
   - MultiParamTypeClasses
+  - FlexibleContexts
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md
