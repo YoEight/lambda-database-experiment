@@ -35,6 +35,8 @@ default-extensions:
   - OverloadedStrings
   - TypeFamilies
   - GADTs
+  - GeneralizedNewtypeDeriving
+  - MultiParamTypeClasses
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md

@@ -13,11 +13,13 @@
 module Lambda.Node.Types where
 
 --------------------------------------------------------------------------------
+import Control.Monad.Fix
 import Data.Typeable
 import Data.Typeable.Internal
 
 --------------------------------------------------------------------------------
 import Lambda.Node.Prelude
+import Lambda.Node.Settings
 
 --------------------------------------------------------------------------------
 -- Messaging
@@ -117,3 +119,35 @@ getType op = Type t (typeRepFingerprint t)
     t = case op of
           FromTypeable a -> typeOf a
           FromProxy prx  -> typeRep prx
+
+--------------------------------------------------------------------------------
+data Env =
+  Env
+  { _envPub      :: Publish
+  , _envSettings :: Settings
+  }
+
+--------------------------------------------------------------------------------
+newtype Server a =
+  Server { unServer :: ReaderT Env IO a }
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadThrow
+           , MonadCatch
+           , MonadIO
+           , MonadFix
+           )
+
+--------------------------------------------------------------------------------
+instance MonadBase IO Server where
+  liftBase m = Server $ liftBase m
+
+--------------------------------------------------------------------------------
+instance MonadBaseControl IO Server where
+    type StM Server a = a
+    liftBaseWith run = Server $ do
+      env <- ask
+      s   <- liftIO $ run (\m -> runReaderT (unServer m) env)
+      restoreM s
+    restoreM = return
