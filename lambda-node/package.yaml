@@ -44,6 +44,7 @@ default-extensions:
   - MultiParamTypeClasses
   - FlexibleContexts
   - QuasiQuotes
+  - RecordWildCards
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md
@@ -57,6 +58,7 @@ library:
   - base
   - network
   - clock
+  - network-simple
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
