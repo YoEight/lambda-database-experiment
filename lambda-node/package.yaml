@@ -33,6 +33,7 @@ dependencies:
   - fast-logger
   - ekg
   - ekg-core
+  - interpolate
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase
@@ -42,6 +43,7 @@ default-extensions:
   - GeneralizedNewtypeDeriving
   - MultiParamTypeClasses
   - FlexibleContexts
+  - QuasiQuotes
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md
@@ -54,6 +56,7 @@ library:
   dependencies:
   - base
   - network
+  - clock
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
