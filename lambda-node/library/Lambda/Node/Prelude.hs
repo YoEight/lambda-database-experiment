@@ -15,16 +15,24 @@ module Lambda.Node.Prelude
   , module Control.Monad.Logger.CallStack
   , module Data.String.Interpolate.IsString
   , module System.Clock
+  , UUID
   , clockTime
+  , freshUUID
   ) where
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Control.Monad.Logger hiding (logDebug, logInfo, logWarn, logError)
 import Control.Monad.Logger.CallStack
+import Data.UUID
+import Data.UUID.V4
 import Data.String.Interpolate.IsString
 import System.Clock
 
 --------------------------------------------------------------------------------
 clockTime :: MonadIO m => m TimeSpec
 clockTime = liftIO $ getTime Monotonic
+
+--------------------------------------------------------------------------------
+freshUUID :: MonadIO m => m UUID
+freshUUID = liftIO nextRandom

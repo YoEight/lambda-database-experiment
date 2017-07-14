@@ -43,51 +43,61 @@ fromMsg :: Typeable a => Message -> Maybe a
 fromMsg (Message a) = cast a
 
 --------------------------------------------------------------------------------
-class Pub p where
-  publishSTM :: Typeable a => p -> a -> STM Bool
+newtype Session = Session UUID deriving (Eq, Ord, Hashable)
 
 --------------------------------------------------------------------------------
-data EventHandler
+newSession :: MonadIO m => m Session
+newSession = Session <$> freshUUID
 
 --------------------------------------------------------------------------------
-class Sub s where
-  subscribeEventHandler :: s -> EventHandler -> IO ()
+instance Show Session where
+  show (Session sid) = show sid
 
 --------------------------------------------------------------------------------
-data Publish = forall p. Pub p => Publish p
+data Callback where
+  Callback :: Typeable a
+           => Session
+           -> Proxy a
+           -> (a -> Server ())
+           -> Callback
 
 --------------------------------------------------------------------------------
-instance Pub Publish where
-  publishSTM (Publish p) a = publishSTM p a
+instance Show Callback where
+  show (Callback sid prx _) = [i|Session [#{sid}] expects #{typeRep prx}|]
 
 --------------------------------------------------------------------------------
-data Subscribe = forall p. Sub p => Subscribe p
+class PubSub p where
+  subscribeSTM          :: p -> Callback -> STM ()
+  publishSTM            :: Typeable a => p -> a -> STM Bool
+  unsubscribeSessionSTM :: p -> Session -> STM ()
 
 --------------------------------------------------------------------------------
-instance Sub Subscribe where
-  subscribeEventHandler (Subscribe p) a = subscribeEventHandler p a
+subscribe :: (Typeable a, PubSub p, MonadIO m)
+          => p
+          -> Session
+          -> (a -> Server ())
+          -> m ()
+subscribe p s k = atomically $ subscribeSTM p (Callback s Proxy k)
 
 --------------------------------------------------------------------------------
-data Hub = forall h. (Sub h, Pub h) => Hub h
+publish :: (Typeable a, PubSub p, MonadIO m) => p -> a -> m ()
+publish p a = atomically $ void $ publishSTM p a
 
 --------------------------------------------------------------------------------
-instance Sub Hub where
-  subscribeEventHandler (Hub h) = subscribeEventHandler h
+unsubscribeSession :: (PubSub p, MonadIO m) => p -> Session -> m ()
+unsubscribeSession p s = atomically $ unsubscribeSessionSTM p s
 
 --------------------------------------------------------------------------------
-instance Pub Hub where
-  publishSTM (Hub h) = publishSTM h
+data Hub = forall h. PubSub h => Hub h
 
 --------------------------------------------------------------------------------
-asSub :: Sub s => s -> Subscribe
-asSub = Subscribe
+instance PubSub Hub where
+  subscribeSTM (Hub h)          = subscribeSTM h
+  publishSTM (Hub h)            = publishSTM h
+  unsubscribeSessionSTM (Hub h) = unsubscribeSessionSTM h
 
 --------------------------------------------------------------------------------
-asPub :: Pub p => p -> Publish
-asPub = Publish
-
---------------------------------------------------------------------------------
-asHub :: (Sub h, Pub h) => h -> Hub
+asHub :: PubSub h => h -> Hub
 asHub = Hub
 
 --------------------------------------------------------------------------------
@@ -125,7 +135,7 @@ getType op = Type t (typeRepFingerprint t)
 --------------------------------------------------------------------------------
 data Env =
   Env
-  { _envPub        :: Publish
+  { _envHub        :: Hub
   , _envSettings   :: Settings
   , _envLogger     :: LoggerRef
   , _envMonitoring :: Monitoring
@@ -181,19 +191,13 @@ getMonitoring :: Server Monitoring
 getMonitoring = _envMonitoring <$> getEnv
 
 --------------------------------------------------------------------------------
-publish :: Typeable a => a -> Server ()
-publish a = do
-  bus <- _envPub <$> getEnv
-  publishWith bus a
-
---------------------------------------------------------------------------------
-publishWith :: (Pub p, Typeable a, MonadIO m) => p -> a -> m ()
+publishWith :: (PubSub p, Typeable a, MonadIO m) => p -> a -> m ()
 publishWith p a = atomically $ do
   _ <- publishSTM p a
   return ()
 
 --------------------------------------------------------------------------------
-runServer :: Pub p
+runServer :: PubSub p
           => LoggerRef
           -> Settings
           -> Monitoring
@@ -201,4 +205,4 @@ runServer :: Pub p
           -> Server a
           -> IO a
 runServer ref setts m pub (Server action) =
-  runReaderT action (Env (asPub pub) setts ref m)
+  runReaderT action (Env (asHub pub) setts ref m)

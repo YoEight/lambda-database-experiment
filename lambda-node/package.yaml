@@ -34,6 +34,7 @@ dependencies:
   - ekg
   - ekg-core
   - interpolate
+  - uuid
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase

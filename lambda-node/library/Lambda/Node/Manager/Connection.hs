@@ -9,7 +9,7 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Lambda.Node.Manager.Connection where
+module Lambda.Node.Manager.Connection (new) where
 
 --------------------------------------------------------------------------------
 import Network.Simple.TCP
@@ -27,16 +27,47 @@ data ServerSocket =
   }
 
 --------------------------------------------------------------------------------
+data ClientSocket =
+  ClientSocket
+  { _clientSocket :: !Socket
+  , _clientAddr   :: !SockAddr
+  }
+
+--------------------------------------------------------------------------------
+type Connections = HashMap UUID ClientSocket
+
+--------------------------------------------------------------------------------
+data Internal =
+  Internal
+  { _connections :: IORef Connections
+  }
+
+--------------------------------------------------------------------------------
+new :: Settings -> IO ()
+new setts = do
+  self <- Internal <$> newIORef mempty
+  listeningFork self (connectionSettings setts)
+
+--------------------------------------------------------------------------------
 createSocket :: ConnectionSettings -> IO ServerSocket
 createSocket ConnectionSettings{..} = do
   (sock, addr) <- bindSock (Host hostname) (show portNumber)
   return $ ServerSocket sock addr
 
 --------------------------------------------------------------------------------
-acceptConnection :: ServerSocket -> IO ()
-acceptConnection ServerSocket{..} =
-  void $ acceptFork _serverSocket $ \(client, _) -> do
+acceptConnection :: Internal -> ServerSocket -> IO ()
+acceptConnection Internal{..} ServerSocket{..} =
+  void $ acceptFork _serverSocket $ \(sock, addr) -> do
+    let client = ClientSocket sock addr
+    uuid <- freshUUID
+    atomicModifyIORef' _connections $ \m -> (insertMap uuid client m, ())
     return ()
 
-
 --------------------------------------------------------------------------------
+listeningFork :: Internal -> ConnectionSettings -> IO ()
+listeningFork self setts = do
+  sock <- createSocket setts
+  let go = acceptConnection self sock >> go
+  void $ fork go
+
+
