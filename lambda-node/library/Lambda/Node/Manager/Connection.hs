@@ -15,6 +15,10 @@ module Lambda.Node.Manager.Connection (new) where
 import Network.Simple.TCP
 
 --------------------------------------------------------------------------------
+import Data.Serialize
+import Protocol.Package
+
+--------------------------------------------------------------------------------
 import Lambda.Node.Bus
 import Lambda.Node.Logger
 import Lambda.Node.Monitoring
@@ -32,10 +36,12 @@ data ServerSocket =
 --------------------------------------------------------------------------------
 data ClientSocket =
   ClientSocket
-  { _clientId     :: !UUID
-  , _clientSocket :: !Socket
+  { _clientSocket :: !Socket
   , _clientAddr   :: !SockAddr
+  , _clientId     :: !UUID
   , _clientBus    :: !Bus
+  , _clientRecv   :: !(Async ())
+  , _clientSend   :: !(Async ())
   }
 
 --------------------------------------------------------------------------------
@@ -47,6 +53,11 @@ data Internal =
   { _runtime :: Runtime
   , _connections :: IORef Connections
   }
+
+--------------------------------------------------------------------------------
+-- Events
+--------------------------------------------------------------------------------
+newtype PackageArrived = PackageArrived Pkg
 
 --------------------------------------------------------------------------------
 new :: Settings -> IO ()
@@ -64,14 +75,19 @@ createSocket ConnectionSettings{..} = do
   return $ ServerSocket sock addr
 
 --------------------------------------------------------------------------------
+-- | TODO - Makes sure to cleanup everything in case of exception.
 acceptConnection :: Internal -> ServerSocket -> IO ()
 acceptConnection Internal{..} ServerSocket{..} =
   void $ acceptFork _serverSocket $ \(sock, addr) -> do
-    uuid <- freshUUID
-    bus  <- newBus _runtime [i|bus-client-#{uuid}|]
-    let client = ClientSocket uuid sock addr bus
-    atomicModifyIORef' _connections $ \m -> (insertMap uuid client m, ())
-    return ()
+    client <- mfix $ \self ->
+      ClientSocket sock addr <$> freshUUID
+                             <*> newBus _runtime [i|bus-client-#{_clientId self}|]
+                             <*> async (processingIncomingPackage self)
+                             <*> async (processingOutgoingPackage self)
+
+    atomicModifyIORef' _connections $ \m ->
+      (insertMap (_clientId client) client m, ())
+    busProcessedEverything $ _clientBus client
 
 --------------------------------------------------------------------------------
 listeningFork :: Internal -> ConnectionSettings -> IO ()
@@ -80,4 +96,22 @@ listeningFork self setts = do
   let go = acceptConnection self sock >> go
   void $ fork go
 
+--------------------------------------------------------------------------------
+processingIncomingPackage :: ClientSocket -> IO ()
+processingIncomingPackage self@ClientSocket{..} = forever $ do
+  prefixBytes <- recvExact self 4
+  case decode prefixBytes of
+    Left _    -> throwString "Wrong package framing."
+    Right len -> do
+      payload <- recvExact self len
+      case decode payload of
+        Left e    -> throwString [i|Package parsing error #{e}.|]
+        Right pkg -> publishWith _clientBus (PackageArrived pkg)
 
+--------------------------------------------------------------------------------
+recvExact :: ClientSocket -> Int -> IO ByteString
+recvExact = undefined
+
+--------------------------------------------------------------------------------
+processingOutgoingPackage :: ClientSocket -> IO ()
+processingOutgoingPackage ClientSocket{..} = return ()

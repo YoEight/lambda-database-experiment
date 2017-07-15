@@ -9,7 +9,12 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Lambda.Node.Bus where
+module Lambda.Node.Bus
+  ( Bus
+  , busProcessedEverything
+  , busStop
+  , newBus
+  ) where
 
 --------------------------------------------------------------------------------
 import Data.Typeable
@@ -91,3 +96,11 @@ propagate a = traverse_ $ \(Callback _ k) -> do
   case outcome of
     Right _ -> return ()
     Left e  -> logError [i|Exception when propagating #{tpe}: #{e}.|]
+
+--------------------------------------------------------------------------------
+busStop :: MonadIO m => Bus -> m ()
+busStop Bus{..} = atomically $ closeTBMQueue _queue
+
+--------------------------------------------------------------------------------
+busProcessedEverything :: Bus -> IO ()
+busProcessedEverything Bus{..} = waitAsync _worker
