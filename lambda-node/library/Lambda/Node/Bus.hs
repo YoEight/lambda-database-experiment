@@ -61,4 +61,33 @@ instance PubSub Bus where
 
 --------------------------------------------------------------------------------
 processMessages :: Bus -> IO ()
-processMessages = undefined
+processMessages self@Bus{..} = loop
+  where
+    handleMsg (Message a) = do
+      callbacks <- readTVarIO _eventHandlers
+      publishing self callbacks a
+      loop
+
+    loop = traverse_ handleMsg =<< atomically (readTBMQueue _queue)
+
+--------------------------------------------------------------------------------
+publishing :: Typeable a => Bus -> Callbacks -> a -> IO ()
+publishing self@Bus{..} callbacks a = do
+  let tpe = getType (FromTypeable a)
+  runServer _runtime self $ do
+    logDebug [i|Publishing message #{tpe}.|]
+    traverse_ (propagate a) (lookup tpe callbacks)
+    logDebug [i|Message #{tpe} propagated.|]
+
+    unless (tpe == messageType) $
+      traverse_ (propagate (toMsg a)) (lookup messageType callbacks)
+
+--------------------------------------------------------------------------------
+propagate :: Typeable a => a -> Seq Callback -> Server ()
+propagate a = traverse_ $ \(Callback _ k) -> do
+  let Just b = cast a
+      tpe    = typeOf b
+  outcome <- tryAny $ k b
+  case outcome of
+    Right _ -> return ()
+    Left e  -> logError [i|Exception when propagating #{tpe}: #{e}.|]

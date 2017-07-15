@@ -15,6 +15,9 @@ module Lambda.Node.Manager.Connection (new) where
 import Network.Simple.TCP
 
 --------------------------------------------------------------------------------
+import Lambda.Node.Bus
+import Lambda.Node.Logger
+import Lambda.Node.Monitoring
 import Lambda.Node.Prelude
 import Lambda.Node.Settings
 import Lambda.Node.Types
@@ -29,8 +32,10 @@ data ServerSocket =
 --------------------------------------------------------------------------------
 data ClientSocket =
   ClientSocket
-  { _clientSocket :: !Socket
+  { _clientId     :: !UUID
+  , _clientSocket :: !Socket
   , _clientAddr   :: !SockAddr
+  , _clientBus    :: !Bus
   }
 
 --------------------------------------------------------------------------------
@@ -39,13 +44,17 @@ type Connections = HashMap UUID ClientSocket
 --------------------------------------------------------------------------------
 data Internal =
   Internal
-  { _connections :: IORef Connections
+  { _runtime :: Runtime
+  , _connections :: IORef Connections
   }
 
 --------------------------------------------------------------------------------
 new :: Settings -> IO ()
 new setts = do
-  self <- Internal <$> newIORef mempty
+  runtime <- Runtime setts <$> newLoggerRef (LogStdout 0) (LoggerLevel LevelInfo) True
+                           <*> createMonitoring
+
+  self <- Internal runtime <$> newIORef mempty
   listeningFork self (connectionSettings setts)
 
 --------------------------------------------------------------------------------
@@ -58,8 +67,9 @@ createSocket ConnectionSettings{..} = do
 acceptConnection :: Internal -> ServerSocket -> IO ()
 acceptConnection Internal{..} ServerSocket{..} =
   void $ acceptFork _serverSocket $ \(sock, addr) -> do
-    let client = ClientSocket sock addr
     uuid <- freshUUID
+    bus  <- newBus _runtime [i|bus-client-#{uuid}|]
+    let client = ClientSocket uuid sock addr bus
     atomicModifyIORef' _connections $ \m -> (insertMap uuid client m, ())
     return ()
 

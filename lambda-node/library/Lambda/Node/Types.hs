@@ -125,6 +125,10 @@ getType op = Type t (typeRepFingerprint t)
           FromProxy prx  -> typeRep prx
 
 --------------------------------------------------------------------------------
+messageType :: Type
+messageType = getType (FromProxy (Proxy :: Proxy Message))
+
+--------------------------------------------------------------------------------
 data Runtime =
   Runtime
   { _runtimeSettings   :: Settings
