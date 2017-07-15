@@ -56,45 +56,37 @@ instance Show Session where
 --------------------------------------------------------------------------------
 data Callback where
   Callback :: Typeable a
-           => Session
-           -> Proxy a
+           => Proxy a
            -> (a -> Server ())
            -> Callback
 
 --------------------------------------------------------------------------------
 instance Show Callback where
-  show (Callback sid prx _) = [i|Session [#{sid}] expects #{typeRep prx}|]
+  show (Callback prx _) = [i|Callback expects #{typeRep prx}|]
 
 --------------------------------------------------------------------------------
 class PubSub p where
-  subscribeSTM          :: p -> Callback -> STM ()
-  publishSTM            :: Typeable a => p -> a -> STM Bool
-  unsubscribeSessionSTM :: p -> Session -> STM ()
+  subscribeSTM :: p -> Callback -> STM ()
+  publishSTM   :: Typeable a => p -> a -> STM Bool
 
 --------------------------------------------------------------------------------
 subscribe :: (Typeable a, PubSub p, MonadIO m)
           => p
-          -> Session
           -> (a -> Server ())
           -> m ()
-subscribe p s k = atomically $ subscribeSTM p (Callback s Proxy k)
+subscribe p k = atomically $ subscribeSTM p (Callback Proxy k)
 
 --------------------------------------------------------------------------------
 publish :: (Typeable a, PubSub p, MonadIO m) => p -> a -> m ()
 publish p a = atomically $ void $ publishSTM p a
 
 --------------------------------------------------------------------------------
-unsubscribeSession :: (PubSub p, MonadIO m) => p -> Session -> m ()
-unsubscribeSession p s = atomically $ unsubscribeSessionSTM p s
-
---------------------------------------------------------------------------------
 data Hub = forall h. PubSub h => Hub h
 
 --------------------------------------------------------------------------------
 instance PubSub Hub where
-  subscribeSTM (Hub h)          = subscribeSTM h
-  publishSTM (Hub h)            = publishSTM h
-  unsubscribeSessionSTM (Hub h) = unsubscribeSessionSTM h
+  subscribeSTM (Hub h) = subscribeSTM h
+  publishSTM (Hub h)   = publishSTM h
 
 --------------------------------------------------------------------------------
 asHub :: PubSub h => h -> Hub
@@ -133,12 +125,18 @@ getType op = Type t (typeRepFingerprint t)
           FromProxy prx  -> typeRep prx
 
 --------------------------------------------------------------------------------
+data Runtime =
+  Runtime
+  { _runtimeSettings   :: Settings
+  , _runtimeLogger     :: LoggerRef
+  , _runtimeMonitoring :: Monitoring
+  }
+
+--------------------------------------------------------------------------------
 data Env =
   Env
-  { _envHub        :: Hub
-  , _envSettings   :: Settings
-  , _envLogger     :: LoggerRef
-  , _envMonitoring :: Monitoring
+  { _envHub     :: Hub
+  , _envRuntime :: Runtime
   }
 
 --------------------------------------------------------------------------------
@@ -169,13 +167,13 @@ instance MonadBaseControl IO Server where
 --------------------------------------------------------------------------------
 instance MonadLogger Server where
   monadLoggerLog loc src lvl msg  = do
-    loggerRef <- _envLogger <$> getEnv
+    loggerRef <- fmap (_runtimeLogger . _envRuntime) getEnv
     liftIO $ loggerCallback loggerRef loc src lvl (toLogStr msg)
 
 --------------------------------------------------------------------------------
 instance MonadLoggerIO Server where
   askLoggerIO = do
-    loggerRef <- _envLogger <$> getEnv
+    loggerRef <- fmap (_runtimeLogger . _envRuntime) getEnv
     return (loggerCallback loggerRef)
 
 --------------------------------------------------------------------------------
@@ -184,11 +182,11 @@ getEnv = Server ask
 
 --------------------------------------------------------------------------------
 getSettings :: Server Settings
-getSettings = _envSettings <$> getEnv
+getSettings = fmap (_runtimeSettings . _envRuntime) getEnv
 
 --------------------------------------------------------------------------------
 getMonitoring :: Server Monitoring
-getMonitoring = _envMonitoring <$> getEnv
+getMonitoring = fmap (_runtimeMonitoring . _envRuntime) getEnv
 
 --------------------------------------------------------------------------------
 publishWith :: (PubSub p, Typeable a, MonadIO m) => p -> a -> m ()
@@ -197,12 +195,6 @@ publishWith p a = atomically $ do
   return ()
 
 --------------------------------------------------------------------------------
-runServer :: PubSub p
-          => LoggerRef
-          -> Settings
-          -> Monitoring
-          -> p
-          -> Server a
-          -> IO a
-runServer ref setts m pub (Server action) =
-  runReaderT action (Env (asHub pub) setts ref m)
+runServer :: PubSub p => Runtime -> p -> Server a -> IO a
+runServer runtime pub (Server action) =
+  runReaderT action (Env (asHub pub) runtime)

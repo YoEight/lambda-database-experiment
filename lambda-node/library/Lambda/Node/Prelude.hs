@@ -15,10 +15,14 @@ module Lambda.Node.Prelude
   , module Control.Monad.Logger.CallStack
   , module Data.String.Interpolate.IsString
   , module System.Clock
+  , module Control.Monad.Fix
   , UUID
   , clockTime
   , freshUUID
   ) where
+
+--------------------------------------------------------------------------------
+import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
