@@ -110,7 +110,15 @@ processingIncomingPackage self@ClientSocket{..} = forever $ do
 
 --------------------------------------------------------------------------------
 recvExact :: ClientSocket -> Int -> IO ByteString
-recvExact = undefined
+recvExact ClientSocket{..} start = loop mempty start
+  where
+    loop acc 0 = return acc
+    loop acc want = do
+      recv _clientSocket want >>= \case
+        Nothing -> throwString "Remote end close the connection"
+        Just bs
+          | length bs == want -> return (acc <> bs)
+          | otherwise -> loop (acc <> bs) (want - length bs)
 
 --------------------------------------------------------------------------------
 processingOutgoingPackage :: ClientSocket -> IO ()
