@@ -42,6 +42,7 @@ data ClientSocket =
   , _clientBus    :: !Bus
   , _clientRecv   :: !(Async ())
   , _clientSend   :: !(Async ())
+  , _clientQueue  :: !(TBMQueue Pkg)
   }
 
 --------------------------------------------------------------------------------
@@ -84,6 +85,7 @@ acceptConnection Internal{..} ServerSocket{..} =
                              <*> newBus _runtime [i|bus-client-#{_clientId self}|]
                              <*> async (processingIncomingPackage self)
                              <*> async (processingOutgoingPackage self)
+                             <*> newTBMQueueIO 500
 
     atomicModifyIORef' _connections $ \m ->
       (insertMap (_clientId client) client m, ())
@@ -122,4 +124,19 @@ recvExact ClientSocket{..} start = loop mempty start
 
 --------------------------------------------------------------------------------
 processingOutgoingPackage :: ClientSocket -> IO ()
-processingOutgoingPackage ClientSocket{..} = return ()
+processingOutgoingPackage ClientSocket{..} = forever $ do
+  msgs <- atomically nextBatchSTM
+  sendMany _clientSocket msgs
+  where
+    nextBatchSTM = do
+      let loop = do
+            tryReadTBMQueue _clientQueue >>= \case
+              Nothing   -> fail "Queue is closed"
+              Just mMsg ->
+                case mMsg of
+                  Nothing  -> return []
+                  Just pkg -> fmap (encode pkg:) loop
+
+      loop >>= \case
+        [] -> retrySTM
+        xs -> return xs

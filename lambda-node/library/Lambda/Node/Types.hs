@@ -16,6 +16,7 @@ module Lambda.Node.Types where
 import Control.Monad.Fix
 import Data.Typeable
 import Data.Typeable.Internal
+import Protocol.Package
 
 --------------------------------------------------------------------------------
 import Lambda.Node.Logger
