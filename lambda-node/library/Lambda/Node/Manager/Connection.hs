@@ -19,12 +19,13 @@ import Data.Serialize
 import Protocol.Package
 
 --------------------------------------------------------------------------------
-import Lambda.Node.Bus
-import Lambda.Node.Logger
-import Lambda.Node.Monitoring
-import Lambda.Node.Prelude
-import Lambda.Node.Settings
-import Lambda.Node.Types
+import           Lambda.Node.Bus
+import           Lambda.Node.Logger
+import qualified Lambda.Node.Manager.Timer as Timer
+import           Lambda.Node.Monitoring
+import           Lambda.Node.Prelude
+import           Lambda.Node.Settings
+import           Lambda.Node.Types
 
 --------------------------------------------------------------------------------
 data ServerSocket =
@@ -43,6 +44,7 @@ data ClientSocket =
   , _clientRecv   :: !(Async ())
   , _clientSend   :: !(Async ())
   , _clientQueue  :: !(TBMQueue Pkg)
+  , _clientPkgNum :: !(IORef Integer)
   }
 
 --------------------------------------------------------------------------------
@@ -51,7 +53,8 @@ type Connections = HashMap UUID ClientSocket
 --------------------------------------------------------------------------------
 data Internal =
   Internal
-  { _runtime :: Runtime
+  { _runtime     :: Runtime
+  , _mainHub     :: Hub
   , _connections :: IORef Connections
   }
 
@@ -61,12 +64,20 @@ data Internal =
 newtype PackageArrived = PackageArrived Pkg
 
 --------------------------------------------------------------------------------
-new :: Settings -> IO ()
-new setts = do
-  runtime <- Runtime setts <$> newLoggerRef (LogStdout 0) (LoggerLevel LevelInfo) True
-                           <*> createMonitoring
+data Routed where
+  Routed :: Typeable msg => UUID -> msg -> Routed
 
-  self <- Internal runtime <$> newIORef mempty
+--------------------------------------------------------------------------------
+data Tick = Tick
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+new :: PubSub h => h -> Runtime -> Settings -> IO ()
+new hub runtime setts = do
+  self <- Internal runtime (asHub hub) <$> newIORef mempty
+
+  subscribe hub (onRouted self)
+
   listeningFork self (connectionSettings setts)
 
 --------------------------------------------------------------------------------
@@ -86,9 +97,18 @@ acceptConnection Internal{..} ServerSocket{..} =
                              <*> async (processingIncomingPackage self)
                              <*> async (processingOutgoingPackage self)
                              <*> newTBMQueueIO 500
+                             <*> newIORef 0
 
     atomicModifyIORef' _connections $ \m ->
       (insertMap (_clientId client) client m, ())
+
+    subscribe (_clientBus client) (onPackageArrived client)
+    subscribe (_clientBus client) (onTick client)
+
+    let ticking = Routed (_clientId client) Tick
+        timer   = Timer.Register ticking 0.2 False
+
+    publishWith _mainHub timer
     busProcessedEverything $ _clientBus client
 
 --------------------------------------------------------------------------------
@@ -140,3 +160,35 @@ processingOutgoingPackage ClientSocket{..} = forever $ do
       loop >>= \case
         [] -> retrySTM
         xs -> return xs
+
+--------------------------------------------------------------------------------
+enqueuePkg :: ClientSocket -> Pkg -> Server ()
+enqueuePkg ClientSocket{..} pkg = atomically $ writeTBMQueue _clientQueue pkg
+
+--------------------------------------------------------------------------------
+incrPkgNum :: ClientSocket -> Server ()
+incrPkgNum ClientSocket{..} = atomicModifyIORef' _clientPkgNum $
+  \n -> (succ n, ())
+
+--------------------------------------------------------------------------------
+-- Event Handlers
+--------------------------------------------------------------------------------
+onRouted :: Internal -> Routed -> Server ()
+onRouted Internal{..} (Routed clientId msg) =
+  traverse_ dispatch . lookup clientId =<< readIORef _connections
+  where
+    dispatch ClientSocket{..} = publishWith _clientBus msg
+
+--------------------------------------------------------------------------------
+onTick :: ClientSocket -> Tick -> Server ()
+onTick ClientSocket{..} _ = logDebug [i|Client #{_clientId}: Ticking...|]
+
+--------------------------------------------------------------------------------
+onPackageArrived :: ClientSocket -> PackageArrived -> Server ()
+onPackageArrived self@ClientSocket{..} (PackageArrived Pkg{..}) = do
+  incrPkgNum self
+
+  case pkgCmd of
+    0x01 -> enqueuePkg self (heartbeatResponse pkgId)
+    0x02 -> return ()
+    _    -> logDebug "Received a request not handled yet."

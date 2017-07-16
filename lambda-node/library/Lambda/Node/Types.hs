@@ -78,8 +78,10 @@ subscribe :: (Typeable a, PubSub p, MonadIO m)
 subscribe p k = atomically $ subscribeSTM p (Callback Proxy k)
 
 --------------------------------------------------------------------------------
-publish :: (Typeable a, PubSub p, MonadIO m) => p -> a -> m ()
-publish p a = atomically $ void $ publishSTM p a
+publish :: Typeable a => a -> Server ()
+publish a = do
+  h <- getHub
+  atomically $ void $ publishSTM h a
 
 --------------------------------------------------------------------------------
 data Hub = forall h. PubSub h => Hub h
@@ -184,6 +186,10 @@ instance MonadLoggerIO Server where
 --------------------------------------------------------------------------------
 getEnv :: Server Env
 getEnv = Server ask
+
+--------------------------------------------------------------------------------
+getHub :: Server Hub
+getHub = _envHub <$> getEnv
 
 --------------------------------------------------------------------------------
 getSettings :: Server Settings

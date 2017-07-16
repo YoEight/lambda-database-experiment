@@ -24,6 +24,18 @@ data Settings =
   { connectionSettings :: !ConnectionSettings }
 
 --------------------------------------------------------------------------------
+parseArgs :: IO Settings
+parseArgs = execParser settingsParser
+
+--------------------------------------------------------------------------------
+settingsParser :: ParserInfo Settings
+settingsParser = info (helper <*> parseSettings) description
+  where
+    description =
+      fullDesc <> header "LDE - Lambda Database Experiment."
+               <> progDesc "Starts the LDE server."
+
+--------------------------------------------------------------------------------
 parseSettings :: Parser Settings
 parseSettings = Settings <$> parseConnectionSettings
 
