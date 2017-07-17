@@ -63,6 +63,7 @@ library:
   - lambda-protocol
   - cereal
   - time
+  - pretty
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

@@ -24,11 +24,16 @@ import           Lambda.Node.Types
 --------------------------------------------------------------------------------
 nodeMain :: IO ()
 nodeMain = do
-  setts   <- parseArgs
-  runtime <- Runtime setts <$> newLoggerRef (LogStdout 0) (LoggerLevel LevelInfo) True
+  setts <- parseArgs
+  print setts
+
+  let LoggingSettings{..} = loggingSettings setts
+  runtime <- Runtime setts <$> newLoggerRef loggingType loggingLevel True
                            <*> createMonitoring
 
   mainBus <- newBus runtime "main-bus"
 
   Timer.new mainBus
   Connection.new mainBus runtime setts
+
+  busProcessedEverything mainBus

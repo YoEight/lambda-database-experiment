@@ -78,45 +78,36 @@ new hub runtime setts = do
 
   subscribe hub (onRouted self)
 
-  listeningFork self (connectionSettings setts)
-
---------------------------------------------------------------------------------
-createSocket :: ConnectionSettings -> IO ServerSocket
-createSocket ConnectionSettings{..} = do
-  (sock, addr) <- bindSock (Host hostname) (show portNumber)
-  return $ ServerSocket sock addr
+  servingFork self (connectionSettings setts)
 
 --------------------------------------------------------------------------------
 -- | TODO - Makes sure to cleanup everything in case of exception.
-acceptConnection :: Internal -> ServerSocket -> IO ()
-acceptConnection Internal{..} ServerSocket{..} =
-  void $ acceptFork _serverSocket $ \(sock, addr) -> do
-    client <- mfix $ \self ->
-      ClientSocket sock addr <$> freshUUID
-                             <*> newBus _runtime [i|bus-client-#{_clientId self}|]
-                             <*> async (processingIncomingPackage self)
-                             <*> async (processingOutgoingPackage self)
-                             <*> newTBMQueueIO 500
-                             <*> newIORef 0
+whenClientConnect :: Internal -> Socket -> SockAddr -> IO ()
+whenClientConnect Internal{..} sock addr = do
+  client <- mfix $ \self ->
+    ClientSocket sock addr <$> freshUUID
+                           <*> newBus _runtime [i|bus-client-#{_clientId self}|]
+                           <*> async (processingIncomingPackage self)
+                           <*> async (processingOutgoingPackage self)
+                           <*> newTBMQueueIO 500
+                           <*> newIORef 0
 
-    atomicModifyIORef' _connections $ \m ->
-      (insertMap (_clientId client) client m, ())
+  atomicModifyIORef' _connections $ \m ->
+    (insertMap (_clientId client) client m, ())
 
-    subscribe (_clientBus client) (onPackageArrived client)
-    subscribe (_clientBus client) (onTick client)
+  subscribe (_clientBus client) (onPackageArrived client)
+  subscribe (_clientBus client) (onTick client)
 
-    let ticking = Routed (_clientId client) Tick
-        timer   = Timer.Register ticking 0.2 False
+  let ticking = Routed (_clientId client) Tick
+      timer   = Timer.Register ticking 0.2 False
 
-    publishWith _mainHub timer
-    busProcessedEverything $ _clientBus client
+  publishWith _mainHub timer
+  busProcessedEverything $ _clientBus client
 
 --------------------------------------------------------------------------------
-listeningFork :: Internal -> ConnectionSettings -> IO ()
-listeningFork self setts = do
-  sock <- createSocket setts
-  let go = acceptConnection self sock >> go
-  void $ fork go
+servingFork :: Internal -> ConnectionSettings -> IO ()
+servingFork self ConnectionSettings{..} = void $ fork $
+  serve (Host hostname) (show portNumber) $ uncurry (whenClientConnect self)
 
 --------------------------------------------------------------------------------
 processingIncomingPackage :: ClientSocket -> IO ()
