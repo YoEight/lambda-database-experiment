@@ -28,7 +28,7 @@ nodeMain = do
   print setts
 
   let LoggingSettings{..} = loggingSettings setts
-  runtime <- Runtime setts <$> newLoggerRef loggingType loggingLevel True
+  runtime <- Runtime setts <$> newLoggerRef loggingType loggingLevel False
                            <*> createMonitoring
 
   mainBus <- newBus runtime "main-bus"
