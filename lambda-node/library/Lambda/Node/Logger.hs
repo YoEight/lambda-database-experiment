@@ -9,7 +9,14 @@
 -- Portability : non-portable
 --
 --------------------------------------------------------------------------------
-module Lambda.Node.Logger where
+module Lambda.Node.Logger
+  ( LoggerFilter(..)
+  , LoggerRef(..)
+  , LogType(..)
+  , loggerCallback
+  , toLogPredicate
+  , newLoggerRef
+  ) where
 
 --------------------------------------------------------------------------------
 import Control.Monad.Logger

@@ -34,6 +34,7 @@ dependencies:
   - ekg
   - ekg-core
   - interpolate
+  - uuid
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase
@@ -44,6 +45,7 @@ default-extensions:
   - MultiParamTypeClasses
   - FlexibleContexts
   - QuasiQuotes
+  - RecordWildCards
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md
@@ -57,6 +59,11 @@ library:
   - base
   - network
   - clock
+  - network-simple
+  - lambda-protocol
+  - cereal
+  - time
+  - pretty
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
