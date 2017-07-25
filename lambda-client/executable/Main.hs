@@ -2,12 +2,13 @@
 -- and only use it in the executable. Doing so allows others to use what you
 -- wrote in their libraries.
 
-import ClassyPrelude
-import LDE.Client
-import LDE.Internal.Settings
+import Control.Concurrent
+import Control.Monad
+
+import Lambda.Client
 
 main :: IO ()
 main = do
-  _ <- newClient (Static "127.0.0.1" 1113)
+  _ <- newClientWithDefault
   forever $ do
     threadDelay 1000000

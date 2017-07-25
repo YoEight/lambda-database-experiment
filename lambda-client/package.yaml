@@ -39,6 +39,12 @@ github: YoEight/lambda-client
 library:
   default-extensions:
     - NoImplicitPrelude
+    - GADTs
+    - TypeFamilies
+    - OverloadedStrings
+    - QuasiQuotes
+    - MultiParamTypeClasses
+    - GeneralizedNewtypeDeriving
   dependencies:
     - base
     - lambda-protocol
@@ -46,7 +52,10 @@ library:
     - classy-prelude
     - uuid
     - cereal
-    - bifunctors
+    - time
+    - monad-logger
+    - interpolate
+    - fast-logger
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
