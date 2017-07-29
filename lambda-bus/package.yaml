@@ -1,0 +1,53 @@
+# This YAML file describes your package. Stack will automatically generate a
+# Cabal file when you run `stack build`. See the hpack website for help with
+# this file: <https://github.com/sol/hpack>.
+benchmarks:
+  lambda-bus-benchmarks:
+    dependencies:
+    - base
+    - lambda-bus
+    - criterion
+    ghc-options:
+    - -rtsopts
+    - -threaded
+    - -with-rtsopts=-N
+    main: Main.hs
+    source-dirs: benchmark
+category: Other
+description: lambda-bus is a new Haskeleton package.
+extra-source-files:
+- LICENSE.md
+- package.yaml
+- README.md
+- stack.yaml
+ghc-options: -Wall
+github: YoEight/lambda-bus
+
+default-extensions:
+  - LambdaCase
+
+library:
+  dependencies:
+  - base
+  - stm
+  - mtl
+  - hashable
+  source-dirs: library
+license: MIT
+maintainer: Yorick Laupa
+name: lambda-bus
+synopsis: A new Haskeleton package.
+tests:
+  lambda-bus-test-suite:
+    dependencies:
+    - base
+    - lambda-bus
+    - tasty
+    - tasty-hspec
+    ghc-options:
+    - -rtsopts
+    - -threaded
+    - -with-rtsopts=-N
+    main: Main.hs
+    source-dirs: test-suite
+version: '0.0.0'
