@@ -1,5 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE TypeFamilies              #-}
 --------------------------------------------------------------------------------
 -- |
@@ -16,7 +18,6 @@ module Lambda.Bus.Types where
 
 --------------------------------------------------------------------------------
 import Control.Concurrent.STM
-import Control.Monad.Trans
 import Data.Semigroup
 import Data.Typeable
 import Data.Typeable.Internal
@@ -53,18 +54,10 @@ instance Show (Callback m) where
   show (Callback prx _) = "Callback expects " <> show (typeRep prx)
 
 --------------------------------------------------------------------------------
-class PubSub p where
-  type Action p :: * -> *
+class PubSub m p | p -> m where
 
-  subscribeSTM :: p -> Callback (Action p) -> STM ()
+  subscribeSTM :: p -> Callback m -> STM ()
   publishSTM   :: Typeable a => p -> a -> STM Bool
-
---------------------------------------------------------------------------------
-subscribe :: (Typeable a, PubSub p, MonadIO m)
-          => p
-          -> (a -> Action p ())
-          -> m ()
-subscribe p k = liftIO $ atomically $ subscribeSTM p (Callback Proxy k)
 
 --------------------------------------------------------------------------------
 data Type = Type TypeRep Fingerprint
