@@ -32,6 +32,8 @@ library:
   - stm
   - mtl
   - hashable
+  - time
+  - monad-control
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
