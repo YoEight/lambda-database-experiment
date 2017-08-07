@@ -59,3 +59,15 @@ publish a = HandlerT $ do
   p <- ask
   _ <- liftIO $ atomically $ publishSTM p a
   return ()
+
+--------------------------------------------------------------------------------
+newtype Configure p m a =
+  Configure (State (AppState p m) a)
+  deriving ( Functor
+           , Applicative
+           , Monad
+           )
+
+--------------------------------------------------------------------------------
+init :: InitT p m () -> Configure p m ()
+init action = Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
