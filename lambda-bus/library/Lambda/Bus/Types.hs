@@ -20,7 +20,7 @@ module Lambda.Bus.Types where
 import Control.Concurrent.STM
 import Data.Semigroup
 import Data.Typeable
-import Data.Typeable.Internal
+import GHC.Fingerprint
 
 --------------------------------------------------------------------------------
 import Data.Hashable
