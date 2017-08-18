@@ -17,6 +17,7 @@ library:
   - uuid
   - clock
   - interpolate
+  - time
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

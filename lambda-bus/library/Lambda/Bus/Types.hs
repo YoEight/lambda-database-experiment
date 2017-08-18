@@ -21,9 +21,7 @@ import Control.Concurrent.STM
 import Data.Semigroup
 import Data.Typeable
 import GHC.Fingerprint
-
---------------------------------------------------------------------------------
-import Data.Hashable
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 data Message where

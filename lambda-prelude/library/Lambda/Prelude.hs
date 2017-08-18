@@ -17,6 +17,7 @@ module Lambda.Prelude
   , module System.Clock
   , module Control.Monad.Fix
   , UUID
+  , NominalDiffTime
   , clockTime
   , freshUUID
   , s2ns
@@ -30,6 +31,7 @@ import Control.Monad.Fix
 import ClassyPrelude
 import Control.Monad.Logger hiding (logDebug, logInfo, logWarn, logError, logOther, logWarnSH, logOtherSH, logDebugSH, logInfoSH, logErrorSH)
 import Control.Monad.Logger.CallStack
+import Data.Time (NominalDiffTime)
 import Data.UUID
 import Data.UUID.V4
 import Data.String.Interpolate.IsString

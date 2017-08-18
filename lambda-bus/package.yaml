@@ -25,6 +25,9 @@ github: YoEight/lambda-bus
 
 default-extensions:
   - LambdaCase
+  - NoImplicitPrelude
+  - QuasiQuotes
+  - RecordWildCards
 
 library:
   dependencies:
@@ -32,10 +35,9 @@ library:
   - stm
   - mtl
   - hashable
-  - time
   - monad-control
-  - transformers-base
-  - lifted-base
+  - lambda-prelude
+  - lambda-logger
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

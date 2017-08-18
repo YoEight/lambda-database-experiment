@@ -23,14 +23,10 @@ module Lambda.Bus.Builder where
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.Lifted
-import Control.Concurrent.STM
-import Control.Monad.Base
-import Control.Monad.Trans.Control
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Data.IORef.Lifted
-import Data.Time
+import Control.Monad.Trans.Control
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Lambda.Bus.Types
@@ -137,7 +133,6 @@ delayed :: (Typeable e, MonadBaseControl IO m, PubSub m p)
         -> HandlerT p m ()
 delayed TimerState{..} msg timespan oneOff = void $ fork loop
   where
-    s2mcs = 10^(6 :: Int)
     micros = truncate (timespan * s2mcs)
     loop = do
       threadDelay micros
