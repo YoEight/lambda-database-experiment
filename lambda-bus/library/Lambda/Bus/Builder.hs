@@ -23,79 +23,63 @@ module Lambda.Bus.Builder where
 import Data.Typeable
 
 --------------------------------------------------------------------------------
-import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Control.Monad.Trans.Control
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Lambda.Bus.Types
 
 --------------------------------------------------------------------------------
-newtype InitT p m a =
-  InitT (StateT [Callback (HandlerT p m)] IO a)
+newtype Init settings a =
+  Init (StateT (Seq (Callback settings)) (Lambda settings) a)
   deriving ( Functor
            , Applicative
            , Monad
            , MonadIO
-           , MonadState [Callback (HandlerT p m)]
+           , MonadState (Seq (Callback settings))
+           , MonadBase IO
+           , MonadBaseControl IO
            )
 
 --------------------------------------------------------------------------------
-data AppState p m =
+runInit :: Init s a -> Lambda s (Seq (Callback s))
+runInit (Init m) = execStateT m mempty
+
+--------------------------------------------------------------------------------
+data AppState settings =
   AppState
-  { _appInit :: !(InitT p m ()) }
+  { _appInit :: !(Init settings ()) }
 
 --------------------------------------------------------------------------------
-subscribe :: (Typeable a, PubSub m p) => (a -> HandlerT p m ()) -> InitT p m ()
-subscribe k = modify (Callback Proxy k:)
+produceCallbacks :: AppState s -> Lambda s (Seq (Callback s))
+produceCallbacks app = runInit (_appInit app)
 
 --------------------------------------------------------------------------------
-newtype HandlerT p m a =
-  HandlerT { unHandlerT :: ReaderT p m a }
-  deriving ( Functor
-           , Applicative
-           , Monad
-           , MonadTrans
-           , MonadIO
-           )
+subscribe :: Typeable a => (a -> React settings ()) -> Init settings ()
+subscribe k = modify (`snoc` Callback Proxy k)
 
 --------------------------------------------------------------------------------
-instance MonadTransControl (HandlerT p) where
-  type StT (HandlerT p) a = a
-
-  liftWith = defaultLiftWith HandlerT unHandlerT
-  restoreT = defaultRestoreT HandlerT
-
-
---------------------------------------------------------------------------------
-instance MonadBaseControl b m => MonadBaseControl b (HandlerT p m) where
-  type StM (HandlerT p m) a = ComposeSt (HandlerT p) m a
-
-  liftBaseWith = defaultLiftBaseWith
-  restoreM     = defaultRestoreM
-
---------------------------------------------------------------------------------
-instance MonadBase b m => MonadBase b (HandlerT p m) where
-    liftBase = HandlerT . liftBase
-
---------------------------------------------------------------------------------
-publish :: (Typeable a, PubSub m p, MonadBase IO m) => a -> HandlerT p m ()
-publish a = HandlerT $ do
+publish :: Typeable a => a -> React settings ()
+publish a = React $ do
   p <- ask
-  _ <- liftBase $ atomically $ publishSTM p a
+  _ <- atomically $ publishSTM p a
   return ()
 
 --------------------------------------------------------------------------------
-newtype Configure p m a =
-  Configure (State (AppState p m) a)
+newtype Configure settings a =
+  Configure (State (AppState settings) a)
   deriving ( Functor
            , Applicative
            , Monad
            )
 
 --------------------------------------------------------------------------------
-initialize :: InitT p m () -> Configure p m ()
+runConfigure :: Configure settings a -> AppState settings
+runConfigure (Configure m) = execState m initState
+  where initState = AppState (return ())
+
+--------------------------------------------------------------------------------
+initialize :: Init settings () -> Configure settings ()
 initialize action =
   Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
 
@@ -109,28 +93,25 @@ data TimerState =
   { _timerStopped :: IORef Bool }
 
 --------------------------------------------------------------------------------
-configureTimer :: (PubSub m p, MonadBaseControl IO m) => Configure p m ()
+configureTimer :: Configure settings ()
 configureTimer = initialize go
   where
     go = do
-      self <- TimerState <$> liftIO (newIORef False)
+      self <- TimerState <$> newIORef False
       subscribe (onRegisterTimer self)
 
 --------------------------------------------------------------------------------
-onRegisterTimer :: (MonadBaseControl IO m, PubSub m p)
-                => TimerState
-                -> RegisterTimer
-                -> HandlerT p m ()
+onRegisterTimer :: TimerState -> RegisterTimer -> React settings ()
 onRegisterTimer self (RegisterTimer evt duration oneOff) =
   delayed self evt duration oneOff
 
 --------------------------------------------------------------------------------
-delayed :: (Typeable e, MonadBaseControl IO m, PubSub m p)
+delayed :: Typeable e
         => TimerState
         -> e
         -> NominalDiffTime
         -> Bool
-        -> HandlerT p m ()
+        -> React settings ()
 delayed TimerState{..} msg timespan oneOff = void $ fork loop
   where
     micros = truncate (timespan * s2mcs)

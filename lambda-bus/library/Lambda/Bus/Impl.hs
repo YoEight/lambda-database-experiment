@@ -25,36 +25,39 @@ import Lambda.Bus.Builder
 import Lambda.Bus.Types
 
 --------------------------------------------------------------------------------
-type Callbacks m = HashMap Type (Seq (Callback m))
+type Callbacks settings = HashMap Type (Seq (Callback settings))
 
 --------------------------------------------------------------------------------
-data Bus m =
-  Bus { _busLoggerRef      :: LoggerRef
-      , _busEventHandlers  :: TVar (Callbacks m)
+data Bus settings =
+  Bus { _busEventHandlers  :: TVar (Callbacks settings)
       , _busQueue          :: TBMQueue Message
       , _workerAsync       :: Async ()
       }
 
 --------------------------------------------------------------------------------
-busStop :: MonadIO m => Bus m -> m ()
+busStop :: Bus settings -> Lambda settings ()
 busStop Bus{..} = atomically $ closeTBMQueue _busQueue
 
 --------------------------------------------------------------------------------
-busProcessedEverything :: MonadIO m => Bus m -> m ()
+busProcessedEverything :: Bus settings -> Lambda settings ()
 busProcessedEverything Bus{..} = waitAsync _workerAsync
 
 --------------------------------------------------------------------------------
-newBus :: (MonadBaseControl IO m, MonadIO m, MonadFix m, MonadLogger m, MonadCatch m, Forall (Pure m))
-       => LoggerRef
-       -> m (Bus m)
-newBus ref =
+newBus :: Lambda settings (Bus settings)
+newBus =
   mfix $ \b -> do
-    Bus ref <$> (liftBase $ newTVarIO mempty)
-            <*> (liftBase $ newTBMQueueIO 500)
-            <*> async (worker b)
+    Bus <$> (liftIO $ newTVarIO mempty)
+        <*> (liftIO $ newTBMQueueIO 500)
+        <*> async (worker b)
 
 --------------------------------------------------------------------------------
-worker :: (MonadLogger m, MonadCatch m, MonadIO m) => Bus m -> m ()
+configure :: Bus settings -> Configure settings () -> Lambda settings ()
+configure self conf =
+  atomically . traverse_ (subscribeSTM self) =<< produceCallbacks app
+  where app = runConfigure conf
+
+--------------------------------------------------------------------------------
+worker :: Bus settings -> Lambda settings ()
 worker self@Bus{..} = loop
   where
     handleMsg (Message a) = do
@@ -65,7 +68,7 @@ worker self@Bus{..} = loop
     loop = traverse_ handleMsg =<< atomically (readTBMQueue _busQueue)
 
 --------------------------------------------------------------------------------
-instance PubSub m (Bus m) where
+instance PubSub Bus where
   subscribeSTM Bus{..} hdl@(Callback prx _) =
     modifyTVar' _busEventHandlers update
       where update callbacks =
@@ -88,29 +91,26 @@ instance PubSub m (Bus m) where
        return $ not closed
 
 --------------------------------------------------------------------------------
-publishing :: (MonadLogger m, MonadIO m, MonadCatch m, Typeable a)
-           => Bus m
-           -> Callbacks m
+publishing :: Typeable a
+           => Bus settings
+           -> Callbacks settings
            -> a
-           -> m ()
-publishing Bus{..} callbacks a = do
+           -> Lambda settings ()
+publishing self@Bus{..} callbacks a = do
   let tpe = getType (FromTypeable a)
   logDebug [i|Publishing message #{tpe}.|]
-  traverse_ (propagate a) (lookup tpe callbacks)
+  traverse_ (propagate self a) (lookup tpe callbacks)
   logDebug [i|Message #{tpe} propagated.|]
 
   unless (tpe == messageType) $
-    traverse_ (propagate (toMsg a)) (lookup messageType callbacks)
+    traverse_ (propagate self (toMsg a)) (lookup messageType callbacks)
 
 --------------------------------------------------------------------------------
-propagate :: (Typeable a, MonadLogger m, MonadCatch m)
-          => a
-          -> Seq (Callback m)
-          -> m ()
-propagate a = traverse_ $ \(Callback _ k) -> do
+propagate :: Typeable a => Bus s -> a -> Seq (Callback s) -> Lambda s ()
+propagate self a =traverse_ $ \(Callback _ k) -> do
   let Just b = cast a
       tpe    = typeOf b
-  outcome <- tryAny $ k b
+  outcome <- tryAny $ runReact (k b) self
   case outcome of
     Right _ -> return ()
     Left e  -> logError [i|Exception when propagating #{tpe}: #{e}.|]

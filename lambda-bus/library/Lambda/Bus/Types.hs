@@ -1,8 +1,10 @@
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FunctionalDependencies    #-}
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE MultiParamTypeClasses     #-}
-{-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE ExistentialQuantification  #-}
+{-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Lambda.Bus.Types
@@ -41,21 +43,28 @@ fromMsg :: Typeable a => Message -> Maybe a
 fromMsg (Message a) = cast a
 
 --------------------------------------------------------------------------------
-data Callback m where
+data Callback settings where
   Callback :: Typeable a
            => Proxy a
-           -> (a -> m ())
-           -> Callback m
+           -> (a -> React settings ())
+           -> Callback settings
 
 --------------------------------------------------------------------------------
-instance Show (Callback m) where
+instance Show (Callback settings) where
   show (Callback prx _) = "Callback expects " <> show (typeRep prx)
 
 --------------------------------------------------------------------------------
-class PubSub m p | p -> m where
+class PubSub p where
+  subscribeSTM :: p s -> Callback s -> STM ()
+  publishSTM   :: Typeable a => p s -> a -> STM Bool
 
-  subscribeSTM :: p -> Callback m -> STM ()
-  publishSTM   :: Typeable a => p -> a -> STM Bool
+--------------------------------------------------------------------------------
+data SomeBus s = forall p. PubSub p => SomeBus (p s)
+
+--------------------------------------------------------------------------------
+instance PubSub SomeBus where
+  subscribeSTM (SomeBus p) c = subscribeSTM p c
+  publishSTM (SomeBus p) a = publishSTM p a
 
 --------------------------------------------------------------------------------
 data Type = Type TypeRep Fingerprint
@@ -92,3 +101,20 @@ getType op = Type t (typeRepFingerprint t)
 --------------------------------------------------------------------------------
 messageType :: Type
 messageType = getType (FromProxy (Proxy :: Proxy Message))
+
+--------------------------------------------------------------------------------
+newtype React settings a =
+  React { unReact :: ReaderT (SomeBus settings) (Lambda settings) a }
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadIO
+           , MonadFix
+           , MonadLogger
+           , MonadBase IO
+           , MonadBaseControl IO
+           )
+
+--------------------------------------------------------------------------------
+runReact :: PubSub p => React s a -> p s -> Lambda s a
+runReact (React m) p = runReaderT m (SomeBus p)
