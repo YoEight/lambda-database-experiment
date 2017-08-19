@@ -1,3 +1,7 @@
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE UndecidableInstances       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module : Lambda.Prelude
@@ -11,11 +15,14 @@
 --------------------------------------------------------------------------------
 module Lambda.Prelude
   ( module ClassyPrelude
-  , module Control.Monad.Logger
-  , module Control.Monad.Logger.CallStack
   , module Data.String.Interpolate.IsString
   , module System.Clock
   , module Control.Monad.Fix
+  , module Lambda.Logger
+  -- * Lambda
+  , Lambda
+  , lambdaMain
+  -- * Misc
   , UUID
   , NominalDiffTime
   , clockTime
@@ -29,12 +36,12 @@ import Control.Monad.Fix
 
 --------------------------------------------------------------------------------
 import ClassyPrelude
-import Control.Monad.Logger hiding (logDebug, logInfo, logWarn, logError, logOther, logWarnSH, logOtherSH, logDebugSH, logInfoSH, logErrorSH)
-import Control.Monad.Logger.CallStack
+import Control.Monad.Reader
 import Data.Time (NominalDiffTime)
 import Data.UUID
 import Data.UUID.V4
 import Data.String.Interpolate.IsString
+import Lambda.Logger
 import System.Clock
 
 --------------------------------------------------------------------------------
@@ -52,3 +59,65 @@ s2ns = 10^(9 :: Int)
 --------------------------------------------------------------------------------
 s2mcs :: Num a => a
 s2mcs = 10^(6 :: Int)
+
+--------------------------------------------------------------------------------
+data Env app =
+  Env { _settings  :: !(Settings app)
+      , _loggerRef :: !LoggerRef
+      }
+
+--------------------------------------------------------------------------------
+instance Functor Env where
+  fmap f e = e { _settings = fmap f (_settings e) }
+
+--------------------------------------------------------------------------------
+data Settings app =
+  Settings { _logType     :: !LogType
+           , _logFilter   :: !LoggerFilter
+           , _appSettings :: !app
+           }
+
+--------------------------------------------------------------------------------
+instance Functor Settings where
+  fmap f s = s { _appSettings = f (_appSettings s) }
+
+--------------------------------------------------------------------------------
+-- Main Lambda monad stack.
+newtype Lambda settings a =
+  Lambda { unLambda :: ReaderT (Env settings) IO a }
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadFix
+           , MonadIO
+           , MonadBase IO
+           , MonadBaseControl IO
+           )
+
+--------------------------------------------------------------------------------
+instance MonadLogger (Lambda settings) where
+  monadLoggerLog loc src lvl msg = Lambda $
+    do ref <- _loggerRef <$> ask
+       liftIO $ loggerCallback ref loc src lvl (toLogStr msg)
+
+--------------------------------------------------------------------------------
+instance MonadReader settings (Lambda settings) where
+  ask = Lambda (fmap (_appSettings . _settings) ask)
+  local k (Lambda m) = Lambda (local (fmap k) m)
+
+--------------------------------------------------------------------------------
+lambdaMain :: settings -> Lambda settings () -> IO ()
+lambdaMain s (Lambda m) =
+  do env <- loadEnv
+     runReaderT m env
+  where loadEnv =
+          Env settings <$> newLoggerRef logType logLevel detailed
+
+        settings = Settings logType logLevel s
+
+        logType = LogStdout 0
+
+        logLevel = LoggerLevel LevelDebug
+
+        detailed = True
+

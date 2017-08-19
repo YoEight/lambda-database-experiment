@@ -10,14 +10,17 @@ extra-source-files:
 - stack.yaml
 ghc-options: -Wall
 library:
+  default-extensions:
+    - NoImplicitPrelude
   dependencies:
   - base
   - classy-prelude
-  - monad-logger
   - uuid
   - clock
   - interpolate
   - time
+  - lambda-logger
+  - mtl
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
