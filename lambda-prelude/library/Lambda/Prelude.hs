@@ -90,6 +90,8 @@ newtype Lambda settings a =
            , Monad
            , MonadFix
            , MonadIO
+           , MonadThrow
+           , MonadCatch
            , MonadBase IO
            , MonadBaseControl IO
            )
