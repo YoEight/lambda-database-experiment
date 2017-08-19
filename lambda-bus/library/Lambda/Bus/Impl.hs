@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 --------------------------------------------------------------------------------
@@ -43,15 +44,17 @@ busProcessedEverything :: MonadIO m => Bus m -> m ()
 busProcessedEverything Bus{..} = waitAsync _workerAsync
 
 --------------------------------------------------------------------------------
-newBus :: MonadIO m => LoggerRef -> m (Bus m)
+newBus :: (MonadBaseControl IO m, MonadIO m, MonadFix m, MonadLogger m, MonadCatch m, Forall (Pure m))
+       => LoggerRef
+       -> m (Bus m)
 newBus ref =
   mfix $ \b -> do
-    Bus ref <$> (liftIO $ newTVarIO mempty)
-            <*> (liftIO $ newTBMQueueIO 500)
+    Bus ref <$> (liftBase $ newTVarIO mempty)
+            <*> (liftBase $ newTBMQueueIO 500)
             <*> async (worker b)
 
 --------------------------------------------------------------------------------
-worker :: MonadIO m => Bus m -> m ()
+worker :: (MonadLogger m, MonadCatch m, MonadIO m) => Bus m -> m ()
 worker self@Bus{..} = loop
   where
     handleMsg (Message a) = do
@@ -79,7 +82,7 @@ instance PubSub m (Bus m) where
               in
                  next tpe callbacks
 
-  publishSTM Bus{..} =
+  publishSTM Bus{..} a =
     do closed <- isClosedTBMQueue _busQueue
        writeTBMQueue _busQueue (toMsg a)
        return $ not closed
@@ -90,7 +93,7 @@ publishing :: (MonadLogger m, MonadIO m, MonadCatch m, Typeable a)
            -> Callbacks m
            -> a
            -> m ()
-publishing self@Bus{..} callbacks a = do
+publishing Bus{..} callbacks a = do
   let tpe = getType (FromTypeable a)
   logDebug [i|Publishing message #{tpe}.|]
   traverse_ (propagate a) (lookup tpe callbacks)
