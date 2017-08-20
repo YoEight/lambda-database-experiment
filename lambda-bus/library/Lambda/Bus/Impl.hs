@@ -22,6 +22,7 @@ import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Lambda.Bus.Builder
+import Lambda.Bus.Timer
 import Lambda.Bus.Types
 
 --------------------------------------------------------------------------------
@@ -45,10 +46,12 @@ busProcessedEverything Bus{..} = waitAsync _workerAsync
 --------------------------------------------------------------------------------
 newBus :: Lambda settings (Bus settings)
 newBus =
-  mfix $ \b -> do
+  mfix $ \self -> do
+    configure self configureTimer
+
     Bus <$> (liftIO $ newTVarIO mempty)
         <*> (liftIO $ newTBMQueueIO 500)
-        <*> async (worker b)
+        <*> async (worker self)
 
 --------------------------------------------------------------------------------
 configure :: Bus settings -> Configure settings () -> Lambda settings ()

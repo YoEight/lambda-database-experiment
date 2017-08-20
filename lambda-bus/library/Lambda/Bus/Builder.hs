@@ -59,13 +59,6 @@ subscribe :: Typeable a => (a -> React settings ()) -> Init settings ()
 subscribe k = modify (`snoc` Callback Proxy k)
 
 --------------------------------------------------------------------------------
-publish :: Typeable a => a -> React settings ()
-publish a = React $ do
-  p <- ask
-  _ <- atomically $ publishSTM p a
-  return ()
-
---------------------------------------------------------------------------------
 newtype Configure settings a =
   Configure (State (AppState settings) a)
   deriving ( Functor
@@ -82,42 +75,4 @@ runConfigure (Configure m) = execState m initState
 initialize :: Init settings () -> Configure settings ()
 initialize action =
   Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
-
---------------------------------------------------------------------------------
-data RegisterTimer =
-  forall e. Typeable e => RegisterTimer e NominalDiffTime Bool
-
---------------------------------------------------------------------------------
-data TimerState =
-  TimerState
-  { _timerStopped :: IORef Bool }
-
---------------------------------------------------------------------------------
-configureTimer :: Configure settings ()
-configureTimer = initialize go
-  where
-    go = do
-      self <- TimerState <$> newIORef False
-      subscribe (onRegisterTimer self)
-
---------------------------------------------------------------------------------
-onRegisterTimer :: TimerState -> RegisterTimer -> React settings ()
-onRegisterTimer self (RegisterTimer evt duration oneOff) =
-  delayed self evt duration oneOff
-
---------------------------------------------------------------------------------
-delayed :: Typeable e
-        => TimerState
-        -> e
-        -> NominalDiffTime
-        -> Bool
-        -> React settings ()
-delayed TimerState{..} msg timespan oneOff = void $ fork loop
-  where
-    micros = truncate (timespan * s2mcs)
-    loop = do
-      threadDelay micros
-      publish msg
-      stopped <- readIORef _timerStopped
-      unless (oneOff || stopped) loop
 

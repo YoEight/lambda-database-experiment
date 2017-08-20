@@ -19,7 +19,6 @@
 module Lambda.Bus.Types where
 
 --------------------------------------------------------------------------------
-import Control.Concurrent.STM
 import Data.Semigroup
 import Data.Typeable
 import GHC.Fingerprint
@@ -114,6 +113,13 @@ newtype React settings a =
            , MonadBase IO
            , MonadBaseControl IO
            )
+
+--------------------------------------------------------------------------------
+publish :: Typeable a => a -> React settings ()
+publish a = React $ do
+  p <- ask
+  _ <- atomically $ publishSTM p a
+  return ()
 
 --------------------------------------------------------------------------------
 runReact :: PubSub p => React s a -> p s -> Lambda s a
