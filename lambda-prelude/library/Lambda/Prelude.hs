@@ -21,10 +21,12 @@ module Lambda.Prelude
   , module Lambda.Logger
   -- * Lambda
   , Lambda
+  , getSettings
   , lambdaMain
   -- * Misc
   , UUID
   , NominalDiffTime
+  , diffUTCTime
   , clockTime
   , freshUUID
   , s2ns
@@ -37,7 +39,7 @@ import Control.Monad.Fix
 --------------------------------------------------------------------------------
 import ClassyPrelude
 import Control.Monad.Reader
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, diffUTCTime)
 import Data.UUID
 import Data.UUID.V4
 import Data.String.Interpolate.IsString
@@ -95,6 +97,10 @@ newtype Lambda settings a =
            , MonadBase IO
            , MonadBaseControl IO
            )
+
+--------------------------------------------------------------------------------
+getSettings :: Lambda settings settings
+getSettings = Lambda (fmap (_appSettings . _settings) ask)
 
 --------------------------------------------------------------------------------
 instance MonadLogger (Lambda settings) where
