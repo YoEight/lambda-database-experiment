@@ -33,8 +33,10 @@ dependencies:
   - fast-logger
   - ekg
   - ekg-core
-  - interpolate
   - uuid
+  - lambda-prelude
+  - lambda-logger
+  - lambda-bus
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase

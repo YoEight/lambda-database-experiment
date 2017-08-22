@@ -32,12 +32,17 @@ type Callbacks settings = HashMap Type (Seq (Callback settings))
 data Bus settings =
   Bus { _busEventHandlers  :: TVar (Callbacks settings)
       , _busQueue          :: TBMQueue Message
+      , _busParent         :: IORef (Maybe (Bus settings))
       , _workerAsync       :: Async ()
       }
 
 --------------------------------------------------------------------------------
 busStop :: Bus settings -> Lambda settings ()
 busStop Bus{..} = atomically $ closeTBMQueue _busQueue
+
+--------------------------------------------------------------------------------
+busParent :: Bus settings -> Bus settings -> Lambda settings ()
+busParent Bus{..} parent = atomicWriteIORef _busParent (Just parent)
 
 --------------------------------------------------------------------------------
 busProcessedEverything :: Bus settings -> Lambda settings ()
@@ -51,6 +56,7 @@ newBus =
 
     Bus <$> (liftIO $ newTVarIO mempty)
         <*> (liftIO $ newTBMQueueIO 500)
+        <*> newIORef Nothing
         <*> async (worker self)
 
 --------------------------------------------------------------------------------
@@ -100,9 +106,18 @@ publishing :: Typeable a
            -> a
            -> Lambda settings ()
 publishing self@Bus{..} callbacks a = do
-  let tpe = getType (FromTypeable a)
+  let tpe      = getType (FromTypeable a)
+      handlers = lookup tpe callbacks
   logDebug [i|Publishing message #{tpe}.|]
-  traverse_ (propagate self a) (lookup tpe callbacks)
+  traverse_ (propagate self a) handlers
+
+  -- If there is no handlers this type of event, we try to dispatch it to its
+  -- parent bus, if any.
+  unless (isJust handlers) $
+    do parentM <- readIORef _busParent
+       for_ parentM $ \parent ->
+         void $ atomically $ publishSTM parent a
+
   logDebug [i|Message #{tpe} propagated.|]
 
   unless (tpe == messageType) $

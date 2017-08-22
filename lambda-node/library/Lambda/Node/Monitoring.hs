@@ -26,15 +26,13 @@ module Lambda.Node.Monitoring
   ) where
 
 --------------------------------------------------------------------------------
+import           Lambda.Prelude
 import qualified System.Metrics              as Metrics
 import qualified System.Metrics.Distribution as Distribution
 import qualified System.Metrics.Counter      as Counter
 import qualified System.Metrics.Gauge        as Gauge
 import qualified System.Metrics.Label        as Label
 import qualified System.Remote.Monitoring    as Monitoring
-
---------------------------------------------------------------------------------
-import Lambda.Node.Prelude
 
 --------------------------------------------------------------------------------
 type Counts        = HashMap Text Counter.Counter

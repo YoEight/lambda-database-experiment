@@ -12,13 +12,11 @@
 module Lambda.Node.Settings where
 
 --------------------------------------------------------------------------------
+import Lambda.Logger
+import Lambda.Prelude
 import Options.Applicative
 import Network
 import Text.PrettyPrint hiding ((<>))
-
---------------------------------------------------------------------------------
-import Lambda.Node.Logger
-import Lambda.Node.Prelude
 
 --------------------------------------------------------------------------------
 data Settings =
@@ -199,7 +197,9 @@ parseLoggingLevel = (LoggerLevel . to) <$> strOption go
                               <> value "info"
                               <> showDefault
 
+    to :: String -> LogLevel
     to "debug" = LevelDebug
     to "info"  = LevelInfo
     to "warn"  = LevelWarn
     to "error" = LevelError
+    to _       = LevelInfo

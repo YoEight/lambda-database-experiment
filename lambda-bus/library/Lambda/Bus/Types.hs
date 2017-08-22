@@ -102,15 +102,8 @@ messageType :: Type
 messageType = getType (FromProxy (Proxy :: Proxy Message))
 
 --------------------------------------------------------------------------------
-data ReactEnv settings =
-  forall parent.
-  ReactEnv { _reactBus    :: SomeBus settings
-           , _reactParent :: Maybe (SomeBus parent)
-           }
-
---------------------------------------------------------------------------------
 newtype React settings a =
-  React { unReact :: ReaderT (ReactEnv settings) (Lambda settings) a }
+  React { unReact :: ReaderT (SomeBus settings) (Lambda settings) a }
   deriving ( Functor
            , Applicative
            , Monad
@@ -124,15 +117,8 @@ newtype React settings a =
 --------------------------------------------------------------------------------
 publish :: Typeable a => a -> React settings ()
 publish a = React $ do
-  p <- asks _reactBus
+  p <- ask
   _ <- atomically $ publishSTM p a
-  return ()
-
---------------------------------------------------------------------------------
-publishParent :: Typeable a => a -> React settings ()
-publishParent a = React $ do
-  ReactEnv _ parent <- ask
-  atomically $ traverse_ (\p -> publishSTM p a) parent
   return ()
 
 --------------------------------------------------------------------------------
@@ -141,8 +127,4 @@ reactSettings = React $ lift getSettings
 
 --------------------------------------------------------------------------------
 runReact :: PubSub p => React s a -> p s -> Lambda s a
-runReact (React m) p = runReaderT m (ReactEnv bus parent)
-  where
-    bus = SomeBus p
-
-    parent = Nothing
+runReact (React m) p = runReaderT m (SomeBus p)

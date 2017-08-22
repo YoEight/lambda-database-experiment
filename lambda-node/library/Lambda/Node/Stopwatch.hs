@@ -16,7 +16,7 @@ module Lambda.Node.Stopwatch
   ) where
 
 --------------------------------------------------------------------------------
-import Lambda.Node.Prelude
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 data Internal =

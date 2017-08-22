@@ -16,17 +16,15 @@ import Network.Simple.TCP
 
 --------------------------------------------------------------------------------
 import Data.Serialize
+import Lambda.Bus
+import Lambda.Logger
+import Lambda.Prelude
 import Protocol.Package
 
 --------------------------------------------------------------------------------
-import           Lambda.Node.Bus
-import           Lambda.Node.Logger
-import qualified Lambda.Node.Manager.Timer as Timer
 import           Lambda.Node.Monitoring
-import           Lambda.Node.Prelude
 import           Lambda.Node.Settings
 import           Lambda.Node.Stopwatch
-import           Lambda.Node.Types
 
 --------------------------------------------------------------------------------
 data CheckState
@@ -46,7 +44,7 @@ initHealthTracking :: HealthTracking
 initHealthTracking = HealthTracking 0 0 CheckInterval
 
 --------------------------------------------------------------------------------
-manageHeartbeat :: ClientSocket -> Server ()
+manageHeartbeat :: ClientSocket -> Lambda Settings ()
 manageHeartbeat self@ClientSocket{..} = do
   setts   <- getSettings
   pkgNum  <- readIORef _clientPkgNum
@@ -94,9 +92,7 @@ type Connections = HashMap UUID ClientSocket
 --------------------------------------------------------------------------------
 data Internal =
   Internal
-  { _runtime     :: Runtime
-  , _mainHub     :: Hub
-  , _connections :: IORef Connections
+  {  _connections :: IORef Connections
   }
 
 --------------------------------------------------------------------------------
@@ -118,6 +114,21 @@ data ConnectionClosed = ConnectionClosed String
 data NewConnection = NewConnection
 
 --------------------------------------------------------------------------------
+data StartListening = StartListening
+
+--------------------------------------------------------------------------------
+app :: Configure Settings ()
+app = initialize $ do
+  self <- Internal <$> newIORef mempty
+
+  subscribe (onStartListening self)
+
+--------------------------------------------------------------------------------
+onStartListening :: Internal -> StartListening -> React Settings ()
+onStartListening self _ =
+  servingFork self . connectionSettings =<< reactSettings
+
+--------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 new :: PubSub h => h -> Runtime -> Settings -> IO ()
 new hub runtime setts = do
@@ -128,7 +139,7 @@ new hub runtime setts = do
   servingFork self (connectionSettings setts)
 
 --------------------------------------------------------------------------------
-whenClientConnect :: Internal -> Socket -> SockAddr -> IO ()
+whenClientConnect :: Internal -> Socket -> SockAddr -> Lambda Settings ()
 whenClientConnect Internal{..} sock addr = do
   client <- mfix $ \self -> do
     ClientSocket sock addr <$> freshUUID
