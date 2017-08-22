@@ -122,6 +122,10 @@ publish a = React $ do
   return ()
 
 --------------------------------------------------------------------------------
+publishOn :: (Typeable a, PubSub p) => p settings -> a -> Lambda settings ()
+publishOn p a = void $ atomically $ publishSTM p a
+
+--------------------------------------------------------------------------------
 reactSettings :: React settings settings
 reactSettings = React $ lift getSettings
 

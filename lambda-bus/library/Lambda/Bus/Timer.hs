@@ -11,29 +11,21 @@
 --------------------------------------------------------------------------------
 module Lambda.Bus.Timer
   ( TimerPlanning(..)
-  , configureTimer
+  , TimerState(..)
   , registerTimer
+  , onRegisterTimer
   ) where
 
 --------------------------------------------------------------------------------
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
-import Lambda.Bus.Builder
 import Lambda.Bus.Types
 
 --------------------------------------------------------------------------------
 data TimerState =
   TimerState
   { _timerStopped :: IORef Bool }
-
---------------------------------------------------------------------------------
-configureTimer :: Configure settings ()
-configureTimer = initialize go
-  where
-    go = do
-      self <- TimerState <$> newIORef False
-      subscribe (onRegisterTimer self)
 
 --------------------------------------------------------------------------------
 onRegisterTimer :: TimerState -> RegisterTimer -> React settings ()
@@ -48,13 +40,14 @@ data RegisterTimer =
 data TimerPlanning = OnOff | Undefinitely
 
 --------------------------------------------------------------------------------
-registerTimer :: Typeable evt
-              => evt
+registerTimer :: (Typeable evt, PubSub p)
+              => p settings
+              -> evt
               -> NominalDiffTime
               -> TimerPlanning
-              -> React settings ()
-registerTimer evt period plan =
-  publish (RegisterTimer evt period boolean)
+              -> Lambda settings ()
+registerTimer p evt period plan =
+  publishOn p (RegisterTimer evt period boolean)
     where boolean =
             case plan of
               OnOff ->

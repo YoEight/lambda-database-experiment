@@ -27,6 +27,7 @@ import Control.Monad.State.Strict
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
+import Lambda.Bus.Timer
 import Lambda.Bus.Types
 
 --------------------------------------------------------------------------------
@@ -48,7 +49,9 @@ runInit (Init m) = execStateT m mempty
 --------------------------------------------------------------------------------
 data AppState settings =
   AppState
-  { _appInit :: !(Init settings ()) }
+  { _appInit   :: !(Init settings ())
+  , _appTimers :: !(Seq Timer)
+  }
 
 --------------------------------------------------------------------------------
 produceCallbacks :: AppState s -> Lambda s (Seq (Callback s))
@@ -69,10 +72,34 @@ newtype Configure settings a =
 --------------------------------------------------------------------------------
 runConfigure :: Configure settings a -> AppState settings
 runConfigure (Configure m) = execState m initState
-  where initState = AppState (return ())
+  where initState = AppState (return ()) mempty
 
 --------------------------------------------------------------------------------
 initialize :: Init settings () -> Configure settings ()
 initialize action =
   Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
 
+--------------------------------------------------------------------------------
+data Timer =
+  forall a. Typeable a =>
+  Timer a NominalDiffTime TimerPlanning
+
+--------------------------------------------------------------------------------
+configureTimer :: Configure settings ()
+configureTimer = initialize go
+  where
+    go = do
+      self <- TimerState <$> newIORef False
+      subscribe (onRegisterTimer self)
+
+--------------------------------------------------------------------------------
+timer :: Typeable a
+      => a
+      -> NominalDiffTime
+      -> TimerPlanning
+      -> Configure settings ()
+timer e timespan planning = Configure $ modify update
+  where
+    t = Timer e timespan planning
+
+    update s = s { _appTimers = _appTimers s `snoc` t }

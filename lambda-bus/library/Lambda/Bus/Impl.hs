@@ -61,9 +61,13 @@ newBus =
 
 --------------------------------------------------------------------------------
 configure :: Bus settings -> Configure settings () -> Lambda settings ()
-configure self conf =
+configure self conf = do
   atomically . traverse_ (subscribeSTM self) =<< produceCallbacks app
+  traverse_ registering (_appTimers app)
   where app = runConfigure conf
+
+        registering (Timer evt timespan plan) =
+          registerTimer self evt timespan plan
 
 --------------------------------------------------------------------------------
 worker :: Bus settings -> Lambda settings ()
