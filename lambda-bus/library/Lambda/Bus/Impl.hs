@@ -32,22 +32,44 @@ type Callbacks settings = HashMap Type (Seq (Callback settings))
 data Bus settings =
   Bus { _busEventHandlers  :: TVar (Callbacks settings)
       , _busQueue          :: TBMQueue Message
-      , _busParent         :: IORef (Maybe (Bus settings))
+      , _busChildren       :: TVar (HashMap UUID (Bus settings))
+      , _busParent         :: TVar (Maybe (Bus settings))
       , _workerAsync       :: Async ()
       , _busId             :: UUID
       }
 
 --------------------------------------------------------------------------------
 busStop :: Bus settings -> Lambda settings ()
-busStop Bus{..} = atomically $ closeTBMQueue _busQueue
+busStop Bus{..} = atomically $ do
+  closeTBMQueue _busQueue
+  parent <- readTVar _busParent
+  for_ parent $ \p ->
+    busDeleteChildSTM p _busId
 
 --------------------------------------------------------------------------------
 busParent :: Bus settings -> Bus settings -> Lambda settings ()
-busParent Bus{..} parent = atomicWriteIORef _busParent (Just parent)
+busParent Bus{..} parent = atomically $ writeTVar _busParent (Just parent)
 
 --------------------------------------------------------------------------------
 busProcessedEverything :: Bus settings -> Lambda settings ()
 busProcessedEverything Bus{..} = waitAsync _workerAsync
+
+--------------------------------------------------------------------------------
+busNewChild :: Bus s -> Lambda s (Bus s)
+busNewChild self = do
+  child <- newBus
+  busInsertChild self child
+  return child
+
+--------------------------------------------------------------------------------
+busInsertChild :: Bus settings -> Bus settings -> Lambda settings ()
+busInsertChild self child = do
+  atomically $ modifyTVar' (_busChildren self) (insertMap (_busId child) child)
+  busParent child self
+
+--------------------------------------------------------------------------------
+busDeleteChildSTM :: Bus settings -> UUID -> STM ()
+busDeleteChildSTM Bus{..} childId = modifyTVar' _busChildren (deleteMap childId)
 
 --------------------------------------------------------------------------------
 newBus :: Lambda settings (Bus settings)
@@ -57,7 +79,8 @@ newBus =
 
     Bus <$> (liftIO $ newTVarIO mempty)
         <*> (liftIO $ newTBMQueueIO mailboxLimit)
-        <*> newIORef Nothing
+        <*> (liftIO $ newTVarIO mempty)
+        <*> (liftIO $ newTVarIO Nothing)
         <*> async (worker self)
         <*> freshUUID
   where
@@ -74,8 +97,6 @@ configure self conf = do
           registerTimer self (_busId self) evt timespan plan
 
 --------------------------------------------------------------------------------
--- TODO - Implements proper message routing (based on sender and destination
--- uuid).
 worker :: Bus settings -> Lambda settings ()
 worker self@Bus{..} = loop
   where
@@ -114,22 +135,33 @@ publishing :: Bus settings
            -> Callbacks settings
            -> Message
            -> Lambda settings ()
-publishing self@Bus{..} callbacks msg@(Message a _ _) = do
-  let tpe      = getType (FromTypeable a)
-      handlers = lookup tpe callbacks
-  logDebug [i|Publishing message #{tpe}.|]
-  traverse_ (propagate self a) handlers
+publishing self@Bus{..} callbacks msg@(Message a _ destM) =
+  unlessM (atomically routedSTM) $
+    do let tpe      = getType (FromTypeable a)
+           handlers = lookup tpe callbacks
 
-  -- If there is no handlers this type of event, we try to dispatch it to its
-  -- parent bus, if any.
-  unless (isJust handlers) $
-    do parentM <- readIORef _busParent
-       for_ parentM $ \parent ->
-         void $ atomically $ publishSTM parent msg
+       logDebug [i|Publishing message #{tpe}.|]
+       traverse_ (propagate self a) handlers
 
-  logDebug [i|Message #{tpe} propagated.|]
+       -- If there is no handlers this type of event, we try to dispatch it to
+       -- its parent bus, if any.
+       unless (isJust handlers) $
+         do parentM <- liftIO $ readTVarIO _busParent
+            for_ parentM $ \parent ->
+              void $ atomically $ publishSTM parent msg
 
-  traverse_ (propagate self msg) (lookup messageType callbacks)
+       logDebug [i|Message #{tpe} propagated.|]
+
+       traverse_ (propagate self msg) (lookup messageType callbacks)
+  where
+    routedSTM =
+       do children <- readTVar _busChildren
+          let known = destM >>= \dest -> lookup dest children
+          case known of
+            Just child ->
+              let newMsg = msg { messageTarget = Nothing }
+               in True <$ publishSTM child newMsg
+            Nothing -> return False
 
 --------------------------------------------------------------------------------
 propagate :: Typeable a => Bus s -> a -> Seq (Callback s) -> Lambda s ()
