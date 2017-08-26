@@ -34,6 +34,7 @@ data Bus settings =
       , _busQueue          :: TBMQueue Message
       , _busParent         :: IORef (Maybe (Bus settings))
       , _workerAsync       :: Async ()
+      , _busId             :: UUID
       }
 
 --------------------------------------------------------------------------------
@@ -55,9 +56,12 @@ newBus =
     configure self configureTimer
 
     Bus <$> (liftIO $ newTVarIO mempty)
-        <*> (liftIO $ newTBMQueueIO 500)
+        <*> (liftIO $ newTBMQueueIO mailboxLimit)
         <*> newIORef Nothing
         <*> async (worker self)
+        <*> freshUUID
+  where
+    mailboxLimit = 500
 
 --------------------------------------------------------------------------------
 configure :: Bus settings -> Configure settings () -> Lambda settings ()
@@ -67,15 +71,17 @@ configure self conf = do
   where app = runConfigure conf
 
         registering (Timer evt timespan plan) =
-          registerTimer self evt timespan plan
+          registerTimer self (_busId self) evt timespan plan
 
 --------------------------------------------------------------------------------
+-- TODO - Implements proper message routing (based on sender and destination
+-- uuid).
 worker :: Bus settings -> Lambda settings ()
 worker self@Bus{..} = loop
   where
-    handleMsg (Message a) = do
+    handleMsg msg = do
       callbacks <- atomically $ readTVar _busEventHandlers
-      publishing self callbacks a
+      publishing self callbacks msg
       loop
 
     loop = traverse_ handleMsg =<< atomically (readTBMQueue _busQueue)
@@ -98,18 +104,17 @@ instance PubSub Bus where
               in
                  next tpe callbacks
 
-  publishSTM Bus{..} a =
+  publishSTM Bus{..} msg =
     do closed <- isClosedTBMQueue _busQueue
-       writeTBMQueue _busQueue (toMsg a)
+       writeTBMQueue _busQueue msg
        return $ not closed
 
 --------------------------------------------------------------------------------
-publishing :: Typeable a
-           => Bus settings
+publishing :: Bus settings
            -> Callbacks settings
-           -> a
+           -> Message
            -> Lambda settings ()
-publishing self@Bus{..} callbacks a = do
+publishing self@Bus{..} callbacks msg@(Message a _ _) = do
   let tpe      = getType (FromTypeable a)
       handlers = lookup tpe callbacks
   logDebug [i|Publishing message #{tpe}.|]
@@ -120,19 +125,24 @@ publishing self@Bus{..} callbacks a = do
   unless (isJust handlers) $
     do parentM <- readIORef _busParent
        for_ parentM $ \parent ->
-         void $ atomically $ publishSTM parent a
+         void $ atomically $ publishSTM parent msg
 
   logDebug [i|Message #{tpe} propagated.|]
 
-  unless (tpe == messageType) $
-    traverse_ (propagate self (toMsg a)) (lookup messageType callbacks)
+  traverse_ (propagate self msg) (lookup messageType callbacks)
 
 --------------------------------------------------------------------------------
 propagate :: Typeable a => Bus s -> a -> Seq (Callback s) -> Lambda s ()
-propagate self a =traverse_ $ \(Callback _ k) -> do
+propagate self@Bus{..} a = traverse_ $ \(Callback _ k) -> do
   let Just b = cast a
       tpe    = typeOf b
-  outcome <- tryAny $ runReact (k b) self
+  outcome <- tryAny $ runReact (k b) reactEnv
   case outcome of
     Right _ -> return ()
     Left e  -> logError [i|Exception when propagating #{tpe}: #{e}.|]
+  where
+    reactEnv =
+      ReactEnv { _reactBus    = toSomeBus self
+               , _reactSelf   = _busId
+               , _reactSender = Nothing
+               }

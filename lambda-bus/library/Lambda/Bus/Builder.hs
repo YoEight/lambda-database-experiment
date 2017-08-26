@@ -80,11 +80,6 @@ initialize action =
   Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
 
 --------------------------------------------------------------------------------
-data Timer =
-  forall a. Typeable a =>
-  Timer a NominalDiffTime TimerPlanning
-
---------------------------------------------------------------------------------
 configureTimer :: Configure settings ()
 configureTimer = initialize go
   where

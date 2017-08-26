@@ -12,6 +12,7 @@
 module Lambda.Bus.Timer
   ( TimerPlanning(..)
   , TimerState(..)
+  , Timer(..)
   , registerTimer
   , onRegisterTimer
   ) where
@@ -33,6 +34,14 @@ onRegisterTimer self (RegisterTimer evt duration oneOff) =
   delayed self evt duration oneOff
 
 --------------------------------------------------------------------------------
+data Timer =
+  forall a. Typeable a =>
+  Timer { timerEvent    :: !a
+        , timerPeriod   :: !NominalDiffTime
+        , timerPlanning :: !TimerPlanning
+        }
+
+--------------------------------------------------------------------------------
 data RegisterTimer =
   forall e. Typeable e => RegisterTimer e NominalDiffTime Bool
 
@@ -42,12 +51,13 @@ data TimerPlanning = OnOff | Undefinitely
 --------------------------------------------------------------------------------
 registerTimer :: (Typeable evt, PubSub p)
               => p settings
+              -> UUID
               -> evt
               -> NominalDiffTime
               -> TimerPlanning
               -> Lambda settings ()
-registerTimer p evt period plan =
-  publishOn p (RegisterTimer evt period boolean)
+registerTimer p uid evt period plan =
+  publishOn p uid (RegisterTimer evt period boolean)
     where boolean =
             case plan of
               OnOff ->

@@ -25,21 +25,24 @@ import GHC.Fingerprint
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
-data Message where
-  Message :: Typeable a => a -> Message
-  deriving Typeable
+data Message =
+  forall payload. Typeable payload =>
+  Message { messagePayload :: !payload
+          , messageSender  :: !UUID
+          , messageTarget  :: !(Maybe UUID)
+          }
+
+--------------------------------------------------------------------------------
+getMessageType :: Message -> Type
+getMessageType (Message p _ _) = getType (FromTypeable p)
 
 --------------------------------------------------------------------------------
 instance Show Message where
-  show (Message a) = "Message: " <> show (typeOf a)
-
---------------------------------------------------------------------------------
-toMsg :: Typeable a => a -> Message
-toMsg = Message
+  show (Message a _ _) = "Message: " <> show (typeOf a)
 
 --------------------------------------------------------------------------------
 fromMsg :: Typeable a => Message -> Maybe a
-fromMsg (Message a) = cast a
+fromMsg (Message a _ _) = cast a
 
 --------------------------------------------------------------------------------
 data Callback settings where
@@ -55,7 +58,10 @@ instance Show (Callback settings) where
 --------------------------------------------------------------------------------
 class PubSub p where
   subscribeSTM :: p s -> Callback s -> STM ()
-  publishSTM   :: Typeable a => p s -> a -> STM Bool
+  publishSTM   :: p s -> Message -> STM Bool
+
+  toSomeBus :: p s -> SomeBus s
+  toSomeBus = SomeBus
 
 --------------------------------------------------------------------------------
 data SomeBus s = forall p. PubSub p => SomeBus (p s)
@@ -102,8 +108,15 @@ messageType :: Type
 messageType = getType (FromProxy (Proxy :: Proxy Message))
 
 --------------------------------------------------------------------------------
+data ReactEnv settings =
+  ReactEnv { _reactBus    :: !(SomeBus settings)
+           , _reactSelf   :: !UUID
+           , _reactSender :: !(Maybe UUID)
+           }
+
+--------------------------------------------------------------------------------
 newtype React settings a =
-  React { unReact :: ReaderT (SomeBus settings) (Lambda settings) a }
+  React { unReact :: ReaderT (ReactEnv settings) (Lambda settings) a }
   deriving ( Functor
            , Applicative
            , Monad
@@ -117,18 +130,33 @@ newtype React settings a =
 --------------------------------------------------------------------------------
 publish :: Typeable a => a -> React settings ()
 publish a = React $ do
-  p <- ask
-  _ <- atomically $ publishSTM p a
+  ReactEnv{..} <- ask
+  let msg = Message a _reactSelf Nothing
+  _ <- atomically $ publishSTM _reactBus msg
   return ()
 
 --------------------------------------------------------------------------------
-publishOn :: (Typeable a, PubSub p) => p settings -> a -> Lambda settings ()
-publishOn p a = void $ atomically $ publishSTM p a
+respond :: Typeable a => a -> React settings ()
+respond a = React $ do
+  ReactEnv{..} <- ask
+  let msg = Message a _reactSelf _reactSender
+  _ <- atomically $ publishSTM _reactBus msg
+  return ()
+
+--------------------------------------------------------------------------------
+publishOn :: (Typeable a, PubSub p)
+          => p settings
+          -> UUID
+          -> a
+          -> Lambda settings ()
+publishOn p sender a = void $ atomically $ publishSTM p msg
+  where
+    msg = Message a sender Nothing
 
 --------------------------------------------------------------------------------
 reactSettings :: React settings settings
 reactSettings = React $ lift getSettings
 
 --------------------------------------------------------------------------------
-runReact :: PubSub p => React s a -> p s -> Lambda s a
-runReact (React m) p = runReaderT m (SomeBus p)
+runReact :: React s a -> ReactEnv s -> Lambda s a
+runReact (React m) env = runReaderT m env
