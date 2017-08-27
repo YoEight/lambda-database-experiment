@@ -91,7 +91,14 @@ configure :: Bus settings -> Configure settings () -> Lambda settings ()
 configure self conf = do
   atomically . traverse_ (subscribeSTM self) =<< produceCallbacks app
   traverse_ registering (_appTimers app)
+  runReact (_appStart app) reactEnv
   where app = runConfigure conf
+
+        reactEnv =
+          ReactEnv { _reactBus  = toSomeBus self
+                   , _reactSelf = _busId self
+                   , _reactSender = Nothing
+                   }
 
         registering (Timer evt timespan plan) =
           registerTimer self (_busId self) evt timespan plan

@@ -51,6 +51,7 @@ data AppState settings =
   AppState
   { _appInit   :: !(Init settings ())
   , _appTimers :: !(Seq Timer)
+  , _appStart  :: !(React settings ())
   }
 
 --------------------------------------------------------------------------------
@@ -72,12 +73,17 @@ newtype Configure settings a =
 --------------------------------------------------------------------------------
 runConfigure :: Configure settings a -> AppState settings
 runConfigure (Configure m) = execState m initState
-  where initState = AppState (return ()) mempty
+  where initState = AppState (return ()) mempty (return ())
 
 --------------------------------------------------------------------------------
 initialize :: Init settings () -> Configure settings ()
 initialize action =
   Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
+
+--------------------------------------------------------------------------------
+appStart :: React settings () -> Configure settings ()
+appStart start =
+  Configure $ modify $ \s -> s { _appStart = _appStart s >> start }
 
 --------------------------------------------------------------------------------
 configureTimer :: Configure settings ()
