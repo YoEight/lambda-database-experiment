@@ -21,8 +21,6 @@ import Lambda.Logger
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
-import Lambda.Bus.Builder
-import Lambda.Bus.Timer
 import Lambda.Bus.Types
 
 --------------------------------------------------------------------------------

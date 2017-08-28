@@ -25,6 +25,9 @@ import GHC.Fingerprint
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
+import Control.Monad.State.Strict
+
+--------------------------------------------------------------------------------
 data Message =
   forall payload. Typeable payload =>
   Message { messagePayload :: !payload
@@ -160,3 +163,145 @@ reactSettings = React $ lift getSettings
 --------------------------------------------------------------------------------
 runReact :: React s a -> ReactEnv s -> Lambda s a
 runReact (React m) env = runReaderT m env
+
+--------------------------------------------------------------------------------
+reactLambda :: Lambda s a -> React s a
+reactLambda m = React $ lift m
+
+--------------------------------------------------------------------------------
+reactSelfId :: React settings UUID
+reactSelfId = React $ asks _reactSelf
+
+--------------------------------------------------------------------------------
+newtype Init settings a =
+  Init (StateT (Seq (Callback settings)) (Lambda settings) a)
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadIO
+           , MonadState (Seq (Callback settings))
+           , MonadBase IO
+           , MonadBaseControl IO
+           )
+
+--------------------------------------------------------------------------------
+runInit :: Init s a -> Lambda s (Seq (Callback s))
+runInit (Init m) = execStateT m mempty
+
+--------------------------------------------------------------------------------
+data AppState settings =
+  AppState
+  { _appInit   :: !(Init settings ())
+  , _appTimers :: !(Seq Timer)
+  , _appStart  :: !(React settings ())
+  }
+
+--------------------------------------------------------------------------------
+produceCallbacks :: AppState s -> Lambda s (Seq (Callback s))
+produceCallbacks app = runInit (_appInit app)
+
+--------------------------------------------------------------------------------
+subscribe :: Typeable a => (a -> React settings ()) -> Init settings ()
+subscribe k = modify (`snoc` Callback Proxy k)
+
+--------------------------------------------------------------------------------
+newtype Configure settings a =
+  Configure (State (AppState settings) a)
+  deriving ( Functor
+           , Applicative
+           , Monad
+           )
+
+--------------------------------------------------------------------------------
+runConfigure :: Configure settings a -> AppState settings
+runConfigure (Configure m) = execState m initState
+  where initState = AppState (return ()) mempty (return ())
+
+--------------------------------------------------------------------------------
+initialize :: Init settings () -> Configure settings ()
+initialize action =
+  Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
+
+--------------------------------------------------------------------------------
+appStart :: React settings () -> Configure settings ()
+appStart start =
+  Configure $ modify $ \s -> s { _appStart = _appStart s >> start }
+
+--------------------------------------------------------------------------------
+configureTimer :: Configure settings ()
+configureTimer = initialize go
+  where
+    go = do
+      self <- TimerState <$> newIORef False
+      subscribe (onRegisterTimer self)
+
+--------------------------------------------------------------------------------
+timer :: Typeable a
+      => a
+      -> NominalDiffTime
+      -> TimerPlanning
+      -> Configure settings ()
+timer e timespan planning = Configure $ modify update
+  where
+    t = Timer e timespan planning
+
+    update s = s { _appTimers = _appTimers s `snoc` t }
+
+--------------------------------------------------------------------------------
+data TimerState =
+  TimerState
+  { _timerStopped :: IORef Bool }
+
+--------------------------------------------------------------------------------
+onRegisterTimer :: TimerState -> RegisterTimer -> React settings ()
+onRegisterTimer self (RegisterTimer evt duration oneOff) =
+  delayed self evt duration oneOff
+
+--------------------------------------------------------------------------------
+data Timer =
+  forall a. Typeable a =>
+  Timer { timerEvent    :: !a
+        , timerPeriod   :: !NominalDiffTime
+        , timerPlanning :: !TimerPlanning
+        }
+
+--------------------------------------------------------------------------------
+data RegisterTimer =
+  forall e. Typeable e => RegisterTimer e NominalDiffTime Bool
+
+--------------------------------------------------------------------------------
+data TimerPlanning = OnOff | Undefinitely
+
+--------------------------------------------------------------------------------
+registerTimer :: (Typeable evt, PubSub p)
+              => p settings
+              -> UUID
+              -> evt
+              -> NominalDiffTime
+              -> TimerPlanning
+              -> Lambda settings ()
+registerTimer p uid evt period plan =
+  publishOn p uid (RegisterTimer evt period boolean)
+    where boolean =
+            case plan of
+              OnOff ->
+                True
+              Undefinitely ->
+                False
+
+--------------------------------------------------------------------------------
+delayed :: Typeable e
+        => TimerState
+        -> e
+        -> NominalDiffTime
+        -> Bool
+        -> React settings ()
+delayed TimerState{..} msg timespan oneOff = void $ fork loop
+  where
+    micros = truncate (timespan * s2mcs)
+    loop = do
+      threadDelay micros
+      publish msg
+      stopped <- readIORef _timerStopped
+      unless (oneOff || stopped) loop
+
