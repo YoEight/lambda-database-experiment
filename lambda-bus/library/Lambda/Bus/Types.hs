@@ -25,9 +25,6 @@ import GHC.Fingerprint
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
-import Control.Monad.State.Strict
-
---------------------------------------------------------------------------------
 data Message =
   forall payload. Typeable payload =>
   Message { messagePayload :: !payload
@@ -62,6 +59,7 @@ instance Show (Callback settings) where
 class PubSub p where
   subscribeSTM :: p s -> Callback s -> STM ()
   publishSTM   :: p s -> Message -> STM Bool
+  busId        :: p s -> UUID
 
   toSomeBus :: p s -> SomeBus s
   toSomeBus = SomeBus
@@ -73,6 +71,8 @@ data SomeBus s = forall p. PubSub p => SomeBus (p s)
 instance PubSub SomeBus where
   subscribeSTM (SomeBus p) c = subscribeSTM p c
   publishSTM (SomeBus p) a = publishSTM p a
+  busId (SomeBus p) = busId p
+  toSomeBus = id
 
 --------------------------------------------------------------------------------
 data Type = Type TypeRep Fingerprint
@@ -173,67 +173,39 @@ reactSelfId :: React settings UUID
 reactSelfId = React $ asks _reactSelf
 
 --------------------------------------------------------------------------------
-newtype Init settings a =
-  Init (StateT (Seq (Callback settings)) (Lambda settings) a)
+subscribe :: Typeable a => (a -> React s ()) -> Configure s ()
+subscribe k = Configure $ do
+  bus <- ask
+  atomically $ subscribeSTM bus $ Callback Proxy k
+
+--------------------------------------------------------------------------------
+newtype Configure s a =
+  Configure (ReaderT (SomeBus s) (Lambda s) a)
   deriving ( Functor
            , Applicative
            , Monad
            , MonadIO
-           , MonadState (Seq (Callback settings))
            , MonadBase IO
            , MonadBaseControl IO
            )
 
 --------------------------------------------------------------------------------
-runInit :: Init s a -> Lambda s (Seq (Callback s))
-runInit (Init m) = execStateT m mempty
-
---------------------------------------------------------------------------------
-data AppState settings =
-  AppState
-  { _appInit   :: !(Init settings ())
-  , _appTimers :: !(Seq Timer)
-  , _appStart  :: !(React settings ())
-  }
-
---------------------------------------------------------------------------------
-produceCallbacks :: AppState s -> Lambda s (Seq (Callback s))
-produceCallbacks app = runInit (_appInit app)
-
---------------------------------------------------------------------------------
-subscribe :: Typeable a => (a -> React settings ()) -> Init settings ()
-subscribe k = modify (`snoc` Callback Proxy k)
-
---------------------------------------------------------------------------------
-newtype Configure settings a =
-  Configure (State (AppState settings) a)
-  deriving ( Functor
-           , Applicative
-           , Monad
-           )
-
---------------------------------------------------------------------------------
-runConfigure :: Configure settings a -> AppState settings
-runConfigure (Configure m) = execState m initState
-  where initState = AppState (return ()) mempty (return ())
-
---------------------------------------------------------------------------------
-initialize :: Init settings () -> Configure settings ()
-initialize action =
-  Configure $ modify $ \s -> s { _appInit = _appInit s >> action }
+runConfigure :: PubSub p => Configure s () -> p s -> Lambda s ()
+runConfigure (Configure m) p = runReaderT m (toSomeBus p)
 
 --------------------------------------------------------------------------------
 appStart :: React settings () -> Configure settings ()
-appStart start =
-  Configure $ modify $ \s -> s { _appStart = _appStart s >> start }
+appStart action = Configure $ do
+  bus <- ask
+  let reactEnv =
+        ReactEnv bus (busId bus) Nothing
+  lift $ runReact action reactEnv
 
 --------------------------------------------------------------------------------
 configureTimer :: Configure settings ()
-configureTimer = initialize go
-  where
-    go = do
-      self <- TimerState <$> newIORef False
-      subscribe (onRegisterTimer self)
+configureTimer = do
+  self <- TimerState <$> newIORef False
+  subscribe (onRegisterTimer self)
 
 --------------------------------------------------------------------------------
 timer :: Typeable a
@@ -241,11 +213,9 @@ timer :: Typeable a
       -> NominalDiffTime
       -> TimerPlanning
       -> Configure settings ()
-timer e timespan planning = Configure $ modify update
-  where
-    t = Timer e timespan planning
-
-    update s = s { _appTimers = _appTimers s `snoc` t }
+timer e timespan planning = Configure $ do
+  bus <- ask
+  lift $ registerTimer bus e timespan planning
 
 --------------------------------------------------------------------------------
 data TimerState =
@@ -258,14 +228,6 @@ onRegisterTimer self (RegisterTimer evt duration oneOff) =
   delayed self evt duration oneOff
 
 --------------------------------------------------------------------------------
-data Timer =
-  forall a. Typeable a =>
-  Timer { timerEvent    :: !a
-        , timerPeriod   :: !NominalDiffTime
-        , timerPlanning :: !TimerPlanning
-        }
-
---------------------------------------------------------------------------------
 data RegisterTimer =
   forall e. Typeable e => RegisterTimer e NominalDiffTime Bool
 
@@ -275,13 +237,12 @@ data TimerPlanning = OnOff | Undefinitely
 --------------------------------------------------------------------------------
 registerTimer :: (Typeable evt, PubSub p)
               => p settings
-              -> UUID
               -> evt
               -> NominalDiffTime
               -> TimerPlanning
               -> Lambda settings ()
-registerTimer p uid evt period plan =
-  publishOn p uid (RegisterTimer evt period boolean)
+registerTimer p evt period plan =
+  publishOn p (busId p) (RegisterTimer evt period boolean)
     where boolean =
             case plan of
               OnOff ->
