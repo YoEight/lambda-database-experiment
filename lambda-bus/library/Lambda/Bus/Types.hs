@@ -60,6 +60,7 @@ class PubSub p where
   subscribeSTM :: p s -> Callback s -> STM ()
   publishSTM   :: p s -> Message -> STM Bool
   busId        :: p s -> UUID
+  busStop      :: p s -> Lambda s ()
 
   toSomeBus :: p s -> SomeBus s
   toSomeBus = SomeBus
@@ -72,6 +73,7 @@ instance PubSub SomeBus where
   subscribeSTM (SomeBus p) c = subscribeSTM p c
   publishSTM (SomeBus p) a = publishSTM p a
   busId (SomeBus p) = busId p
+  busStop (SomeBus p) = busStop p
   toSomeBus = id
 
 --------------------------------------------------------------------------------
@@ -125,6 +127,8 @@ newtype React settings a =
            , Monad
            , MonadIO
            , MonadFix
+           , MonadThrow
+           , MonadCatch
            , MonadLogger
            , MonadBase IO
            , MonadBaseControl IO
@@ -157,6 +161,12 @@ publishOn p sender a = void $ atomically $ publishSTM p msg
     msg = Message a sender Nothing
 
 --------------------------------------------------------------------------------
+stop :: React s ()
+stop = React $ do
+  bus <- asks _reactBus
+  lift $ busStop bus
+
+--------------------------------------------------------------------------------
 reactSettings :: React settings settings
 reactSettings = React $ lift getSettings
 
@@ -184,6 +194,7 @@ newtype Configure s a =
   deriving ( Functor
            , Applicative
            , Monad
+           , MonadFix
            , MonadIO
            , MonadBase IO
            , MonadBaseControl IO

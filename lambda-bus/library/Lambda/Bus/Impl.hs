@@ -37,8 +37,8 @@ data Bus settings =
       }
 
 --------------------------------------------------------------------------------
-busStop :: Bus settings -> Lambda settings ()
-busStop Bus{..} = atomically $ do
+_busStop :: Bus settings -> Lambda settings ()
+_busStop Bus{..} = atomically $ do
   closeTBMQueue _busQueue
   parent <- readTVar _busParent
   for_ parent $ \p ->
@@ -123,6 +123,7 @@ instance PubSub Bus where
        return $ not closed
 
   busId = _busId
+  busStop = _busStop
 
 --------------------------------------------------------------------------------
 publishing :: Bus settings
