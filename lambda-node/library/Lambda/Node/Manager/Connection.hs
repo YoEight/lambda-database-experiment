@@ -44,9 +44,9 @@ initHealthTracking :: HealthTracking
 initHealthTracking = HealthTracking 0 0 CheckInterval
 
 --------------------------------------------------------------------------------
-manageHeartbeat :: ClientSocket -> Lambda Settings ()
+manageHeartbeat :: ClientSocket -> React Settings ()
 manageHeartbeat self@ClientSocket{..} = do
-  setts   <- getSettings
+  setts   <- reactSettings
   pkgNum  <- readIORef _clientPkgNum
   track   <- readIORef _clientHealth
   elapsed <- stopwatchElapsed _clientStopwatch
@@ -67,7 +67,8 @@ manageHeartbeat self@ClientSocket{..} = do
           let newTrack = HealthTracking pkgNum elapsed CheckTimeout
           atomicWriteIORef _clientHealth newTrack
         CheckTimeout -> do
-          logWarn [i|Connection #{_clientId} closed: Heartbeat timeout.|]
+          clientId <- reactSelfId
+          logWarn [i|Connection #{clientId} closed: Heartbeat timeout.|]
           closeConnection self "HEARTBEAT TIMEOUT"
 
 --------------------------------------------------------------------------------
@@ -75,11 +76,7 @@ data ClientSocket =
   ClientSocket
   { _clientSocket    :: !Socket
   , _clientAddr      :: !SockAddr
-  , _clientId        :: !UUID
-  , _clientBus       :: !Bus
   , _clientStopwatch :: !Stopwatch
-  , _clientRecv      :: !(Async ())
-  , _clientSend      :: !(Async ())
   , _clientQueue     :: !(TBMQueue Pkg)
   , _clientPkgNum    :: !(IORef Integer)
   , _clientHealth    :: !(IORef HealthTracking)
@@ -101,10 +98,6 @@ data Internal =
 newtype PackageArrived = PackageArrived Pkg
 
 --------------------------------------------------------------------------------
-data Routed where
-  Routed :: Typeable msg => UUID -> msg -> Routed
-
---------------------------------------------------------------------------------
 data Tick = Tick
 
 --------------------------------------------------------------------------------
@@ -117,73 +110,76 @@ data NewConnection = NewConnection
 data StartListening = StartListening
 
 --------------------------------------------------------------------------------
-app :: Configure Settings ()
-app = initialize $ do
+app :: Bus Settings -> Configure Settings ()
+app mainBus = do
   self <- Internal <$> newIORef mempty
 
-  subscribe (onStartListening self)
+  appStart (startListening self mainBus)
 
 --------------------------------------------------------------------------------
-onStartListening :: Internal -> StartListening -> React Settings ()
-onStartListening self _ =
-  servingFork self . connectionSettings =<< reactSettings
+startListening :: Internal -> Bus Settings -> React Settings ()
+startListening self mainBus =
+  servingFork self mainBus . connectionSettings =<< reactSettings
 
 --------------------------------------------------------------------------------
---------------------------------------------------------------------------------
-new :: PubSub h => h -> Runtime -> Settings -> IO ()
-new hub runtime setts = do
-  self <- Internal runtime (asHub hub) <$> newIORef mempty
+new :: Bus Settings -> Lambda Settings ()
+new mainBus = do
+  setts <- getSettings
+  self  <- Internal <$> newIORef mempty
 
-  subscribe hub (onRouted self)
-
-  servingFork self (connectionSettings setts)
+  configure mainBus (app mainBus)
 
 --------------------------------------------------------------------------------
-whenClientConnect :: Internal -> Socket -> SockAddr -> Lambda Settings ()
-whenClientConnect Internal{..} sock addr = do
-  client <- mfix $ \self -> do
-    ClientSocket sock addr <$> freshUUID
-                           <*> newBus _runtime [i|bus-client-#{_clientId self}|]
-                           <*> newStopwatch
-                           <*> async (processingIncomingPackage self)
-                           <*> async (processingOutgoingPackage self)
-                           <*> newTBMQueueIO 500
-                           <*> newIORef 0
-                           <*> newIORef initHealthTracking
-                           <*> newIORef False
+clientApp :: ClientSocket -> Configure Settings ()
+clientApp self = do
+  subscribe (onPackageArrived self)
+  subscribe (onConnectionClosed self)
+  subscribe (onTick self)
 
-  atomicModifyIORef' _connections $ \m ->
-    (insertMap (_clientId client) client m, ())
+  timer Tick 0.2 Undefinitely
 
-  subscribe (_clientBus client) (onNewConnection client)
-  subscribe (_clientBus client) (onPackageArrived client)
-  subscribe (_clientBus client) (onTick client)
-  subscribe (_clientBus client) (onConnectionClosed client)
-
-  let ticking = Routed (_clientId client) Tick
-      timer   = Timer.Register ticking 0.2 False
-
-  publishWith (_clientBus client) NewConnection
-  publishWith _mainHub timer
-
-  busProcessedEverything $ _clientBus client
+  appStart $
+    do clientId <- reactSelfId
+       _ <- async (processingIncomingPackage self)
+       _ <- async (processingOutgoingPackage self)
+       logInfo [i|New connection #{clientId} on #{_clientAddr self}|]
 
 --------------------------------------------------------------------------------
-servingFork :: Internal -> ConnectionSettings -> IO ()
-servingFork self ConnectionSettings{..} = void $ fork $
-  serve (Host hostname) (show portNumber) $ uncurry (whenClientConnect self)
+newClientSocket :: Socket -> SockAddr -> Configure s ClientSocket
+newClientSocket sock addr =
+  mfix $ \self ->
+    ClientSocket sock addr
+      <$> newStopwatch
+      <*> (liftIO $ newTBMQueueIO 500)
+      <*> newIORef 0
+      <*> newIORef initHealthTracking
+      <*> newIORef False
 
 --------------------------------------------------------------------------------
-processingIncomingPackage :: ClientSocket -> IO ()
-processingIncomingPackage self@ClientSocket{..} = handleAny (onError self) $ forever $ do
-  prefixBytes <- recvExact self 4
+servingFork :: Internal
+            -> Bus Settings
+            -> ConnectionSettings
+            -> React Settings ()
+servingFork self mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run ->
+  serve (Host hostname) (show portNumber) $ \(sock, addr) -> run $ reactLambda $
+    do child <- busNewChild mainBus
+       configure child (clientConf sock addr)
+       busProcessedEverything child
+  where
+    clientConf sock addr =
+      newClientSocket sock addr >>= clientApp
+
+--------------------------------------------------------------------------------
+processingIncomingPackage :: ClientSocket -> React Settings ()
+processingIncomingPackage self@ClientSocket{..} = handleAny onError $ forever $ do
+  prefixBytes <- liftIO $ recvExact self 4
   case decode prefixBytes of
     Left _    -> throwString "Wrong package framing."
     Right len -> do
-      payload <- recvExact self len
+      payload <- liftIO $ recvExact self len
       case decode payload of
         Left e    -> throwString [i|Package parsing error #{e}.|]
-        Right pkg -> publishWith _clientBus (PackageArrived pkg)
+        Right pkg -> publish (PackageArrived pkg)
 
 --------------------------------------------------------------------------------
 recvExact :: ClientSocket -> Int -> IO ByteString
@@ -198,57 +194,52 @@ recvExact ClientSocket{..} start = loop mempty start
           | otherwise -> loop (acc <> bs) (want - length bs)
 
 --------------------------------------------------------------------------------
-processingOutgoingPackage :: ClientSocket -> IO ()
-processingOutgoingPackage self@ClientSocket{..} = handleAny (onError self) $ forever $ do
-  msgs <- atomically nextBatchSTM
-  sendMany _clientSocket msgs
+processingOutgoingPackage :: ClientSocket -> React Settings ()
+processingOutgoingPackage self@ClientSocket{..} = handleAny onError $ forever $ do
+  clientId <- reactSelfId
+  msgs <- atomically $ nextBatchSTM clientId
+  liftIO $ sendMany _clientSocket msgs
   where
-    nextBatchSTM = do
+    nextBatchSTM clientId =
       let loop = do
             tryReadTBMQueue _clientQueue >>= \case
-              Nothing   -> fail [i|Connection #{_clientId} queue closed.|]
+              Nothing   -> fail [i|Connection #{clientId} queue closed.|]
               Just mMsg ->
                 case mMsg of
                   Nothing  -> return []
                   Just pkg -> fmap (encode pkg:) loop
 
-      loop >>= \case
-        [] -> retrySTM
-        xs -> return xs
+       in loop >>= \case
+            [] -> retrySTM
+            xs -> return xs
 
 --------------------------------------------------------------------------------
-enqueuePkg :: ClientSocket -> Pkg -> Server ()
+enqueuePkg :: ClientSocket -> Pkg -> React Settings ()
 enqueuePkg ClientSocket{..} pkg = atomically $ writeTBMQueue _clientQueue pkg
 
 --------------------------------------------------------------------------------
-incrPkgNum :: ClientSocket -> Server ()
+incrPkgNum :: ClientSocket -> React Settings ()
 incrPkgNum ClientSocket{..} = atomicModifyIORef' _clientPkgNum $
   \n -> (succ n, ())
 
 --------------------------------------------------------------------------------
-closeConnection :: ClientSocket -> String -> Server ()
+closeConnection :: ClientSocket -> String -> React Settings ()
 closeConnection ClientSocket{..} reason = do
-  done <- atomicModifyIORef' _clientClosing $ \b -> (True, b)
+  done     <- atomicModifyIORef' _clientClosing $ \b -> (True, b)
+  clientId <- reactSelfId
   unless done $ do
-    busStop _clientBus
     atomically $ closeTBMQueue _clientQueue
-    logInfo [i|Connection #{_clientId} closed, reason: #{reason}.|]
+    logInfo [i|Connection #{clientId} closed, reason: #{reason}.|]
+    stop
 
 --------------------------------------------------------------------------------
 -- Event Handlers
 --------------------------------------------------------------------------------
-onRouted :: Internal -> Routed -> Server ()
-onRouted Internal{..} (Routed clientId msg) =
-  traverse_ dispatch . lookup clientId =<< readIORef _connections
-  where
-    dispatch ClientSocket{..} = publishWith _clientBus msg
-
---------------------------------------------------------------------------------
-onTick :: ClientSocket -> Tick -> Server ()
+onTick :: ClientSocket -> Tick -> React Settings ()
 onTick self _ = manageHeartbeat self
 
 --------------------------------------------------------------------------------
-onPackageArrived :: ClientSocket -> PackageArrived -> Server ()
+onPackageArrived :: ClientSocket -> PackageArrived -> React Settings ()
 onPackageArrived self@ClientSocket{..} (PackageArrived Pkg{..}) = do
   incrPkgNum self
   logDebug [i|Package #{pkgId} arrived.|]
@@ -259,16 +250,10 @@ onPackageArrived self@ClientSocket{..} (PackageArrived Pkg{..}) = do
     _    -> logDebug "Received a request not handled yet."
 
 --------------------------------------------------------------------------------
-onError :: ClientSocket -> SomeException -> IO ()
-onError ClientSocket{..} e =
-  publishWith _clientBus (ConnectionClosed $ show e)
+onError :: SomeException -> React s ()
+onError e = publish (ConnectionClosed $ show e)
 
 --------------------------------------------------------------------------------
-onNewConnection :: ClientSocket -> NewConnection -> Server ()
-onNewConnection ClientSocket{..} _ =
-  logInfo [i|New connection #{_clientId} on #{_clientAddr}|]
-
---------------------------------------------------------------------------------
-onConnectionClosed :: ClientSocket -> ConnectionClosed -> Server ()
+onConnectionClosed :: ClientSocket -> ConnectionClosed -> React Settings ()
 onConnectionClosed self (ConnectionClosed reason) =
   closeConnection self reason
