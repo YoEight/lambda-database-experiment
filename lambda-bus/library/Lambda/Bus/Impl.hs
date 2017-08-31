@@ -71,16 +71,17 @@ busDeleteChildSTM Bus{..} childId = modifyTVar' _busChildren (deleteMap childId)
 
 --------------------------------------------------------------------------------
 newBus :: Lambda settings (Bus settings)
-newBus =
-  mfix $ \self -> do
-    configure self configureTimer
-
+newBus = do
+  bus <- mfix $ \self ->
     Bus <$> (liftIO $ newTVarIO mempty)
         <*> (liftIO $ newTBMQueueIO mailboxLimit)
         <*> (liftIO $ newTVarIO mempty)
         <*> (liftIO $ newTVarIO Nothing)
         <*> async (worker self)
         <*> freshUUID
+
+  configure bus configureTimer
+  return bus
   where
     mailboxLimit = 500
 
