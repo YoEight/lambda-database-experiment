@@ -22,9 +22,8 @@ import Lambda.Prelude
 import Protocol.Package
 
 --------------------------------------------------------------------------------
-import           Lambda.Node.Monitoring
-import           Lambda.Node.Settings
-import           Lambda.Node.Stopwatch
+import Lambda.Node.Settings
+import Lambda.Node.Stopwatch
 
 --------------------------------------------------------------------------------
 data CheckState
@@ -84,15 +83,6 @@ data ClientSocket =
   }
 
 --------------------------------------------------------------------------------
-type Connections = HashMap UUID ClientSocket
-
---------------------------------------------------------------------------------
-data Internal =
-  Internal
-  {  _connections :: IORef Connections
-  }
-
---------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
 newtype PackageArrived = PackageArrived Pkg
@@ -104,29 +94,17 @@ data Tick = Tick
 data ConnectionClosed = ConnectionClosed String
 
 --------------------------------------------------------------------------------
-data NewConnection = NewConnection
-
---------------------------------------------------------------------------------
-data StartListening = StartListening
-
---------------------------------------------------------------------------------
 app :: Bus Settings -> Configure Settings ()
-app mainBus = do
-  self <- Internal <$> newIORef mempty
-
-  appStart (startListening self mainBus)
+app mainBus = appStart (startListening mainBus)
 
 --------------------------------------------------------------------------------
-startListening :: Internal -> Bus Settings -> React Settings ()
-startListening self mainBus =
-  servingFork self mainBus . connectionSettings =<< reactSettings
+startListening :: Bus Settings -> React Settings ()
+startListening mainBus =
+  servingFork mainBus . connectionSettings =<< reactSettings
 
 --------------------------------------------------------------------------------
 new :: Bus Settings -> Lambda Settings ()
 new mainBus = do
-  setts <- getSettings
-  self  <- Internal <$> newIORef mempty
-
   configure mainBus (app mainBus)
 
 --------------------------------------------------------------------------------
@@ -147,20 +125,16 @@ clientApp self = do
 --------------------------------------------------------------------------------
 newClientSocket :: Socket -> SockAddr -> Configure s ClientSocket
 newClientSocket sock addr =
-  mfix $ \self ->
-    ClientSocket sock addr
-      <$> newStopwatch
-      <*> (liftIO $ newTBMQueueIO 500)
-      <*> newIORef 0
-      <*> newIORef initHealthTracking
-      <*> newIORef False
+  ClientSocket sock addr
+    <$> newStopwatch
+    <*> (liftIO $ newTBMQueueIO 500)
+    <*> newIORef 0
+    <*> newIORef initHealthTracking
+    <*> newIORef False
 
 --------------------------------------------------------------------------------
-servingFork :: Internal
-            -> Bus Settings
-            -> ConnectionSettings
-            -> React Settings ()
-servingFork self mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run ->
+servingFork :: Bus Settings -> ConnectionSettings -> React Settings ()
+servingFork mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run ->
   serve (Host hostname) (show portNumber) $ \(sock, addr) -> run $ reactLambda $
     do child <- busNewChild mainBus
        configure child (clientConf sock addr)
@@ -195,7 +169,7 @@ recvExact ClientSocket{..} start = loop mempty start
 
 --------------------------------------------------------------------------------
 processingOutgoingPackage :: ClientSocket -> React Settings ()
-processingOutgoingPackage self@ClientSocket{..} = handleAny onError $ forever $ do
+processingOutgoingPackage ClientSocket{..} = handleAny onError $ forever $ do
   clientId <- reactSelfId
   msgs <- atomically $ nextBatchSTM clientId
   liftIO $ sendMany _clientSocket msgs
