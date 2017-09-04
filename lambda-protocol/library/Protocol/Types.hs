@@ -13,10 +13,10 @@
 module Protocol.Types where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.Serialize
 import Data.UUID hiding (fromString)
 import Data.UUID.V4
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 class FreshId ident where
@@ -35,7 +35,7 @@ guidFromBytes = fmap Guid . fromByteString . fromStrict
 
 --------------------------------------------------------------------------------
 instance Hashable Guid where
-  hashWithSalt x (Guid i) = hashWithSalt x i
+  hashWithSalt x (Guid g) = hashWithSalt x g
 
 --------------------------------------------------------------------------------
 instance Serialize Guid where
@@ -49,7 +49,7 @@ instance Serialize Guid where
 
 --------------------------------------------------------------------------------
 instance Show Guid where
-  show (Guid i) = show i
+  show (Guid g) = show g
 
 --------------------------------------------------------------------------------
 instance FreshId Guid where

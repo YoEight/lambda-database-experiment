@@ -15,9 +15,9 @@
 module Protocol.Message.EventRecord where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Protocol.Types

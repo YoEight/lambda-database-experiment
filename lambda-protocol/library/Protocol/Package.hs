@@ -14,7 +14,7 @@
 module Protocol.Package where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Lambda.Prelude
 import Data.Serialize
 import Data.UUID
 import Data.UUID.V4
@@ -28,7 +28,11 @@ instance Serialize Cmd where
   get = Cmd <$> getWord8
 
 --------------------------------------------------------------------------------
-newtype PkgId = PkgId UUID deriving (Eq, Ord, Show)
+newtype PkgId = PkgId UUID deriving (Eq, Ord)
+
+--------------------------------------------------------------------------------
+instance Show PkgId where
+  show (PkgId pid) = [i|[#{pid}]|]
 
 --------------------------------------------------------------------------------
 freshPkgId :: IO PkgId
@@ -47,6 +51,10 @@ instance Serialize PkgId where
 
 --------------------------------------------------------------------------------
 newtype PkgPrefix = PkgPrefix Word32
+
+--------------------------------------------------------------------------------
+pkgPrefixIntegral :: Integral a => PkgPrefix -> a
+pkgPrefixIntegral (PkgPrefix w) = fromIntegral w
 
 --------------------------------------------------------------------------------
 instance Serialize PkgPrefix where
@@ -75,6 +83,10 @@ instance Serialize Pkg where
     Pkg <$> get
         <*> get
         <*> (remaining >>= getBytes)
+
+--------------------------------------------------------------------------------
+instance Show Pkg where
+  show Pkg{..} = [i|Pkg #{pkgId} #{pkgCmd}|]
 
 --------------------------------------------------------------------------------
 heartbeatRequest :: IO Pkg

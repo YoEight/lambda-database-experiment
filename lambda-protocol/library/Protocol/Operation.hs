@@ -17,7 +17,7 @@ module Protocol.Operation where
 import Data.List.NonEmpty
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Protocol.Package

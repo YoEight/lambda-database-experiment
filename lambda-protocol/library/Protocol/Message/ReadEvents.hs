@@ -21,9 +21,9 @@ module Protocol.Message.ReadEvents
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize hiding (Result)
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Protocol.Operation

@@ -14,13 +14,14 @@ github: YoEight/lambda-protocol
 default-extensions:
   - NoImplicitPrelude
   - OverloadedStrings
+  - QuasiQuotes
 library:
   default-extensions:
     - GeneralizedNewtypeDeriving
   dependencies:
     - base >=4.9 && <5
     - protobuf
-    - classy-prelude
+    - lambda-prelude
     - uuid
     - cereal
     - hashable

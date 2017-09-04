@@ -49,6 +49,8 @@ library:
     - base
     - lambda-protocol
     - lambda-prelude
+    - lambda-bus
+    - lambda-logger
     - connection
     - cereal
   source-dirs: library

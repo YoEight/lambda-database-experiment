@@ -20,7 +20,7 @@ module Protocol.Message
   ) where
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import qualified Protocol.Message.WriteEvents as WriteEvents

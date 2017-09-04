@@ -23,9 +23,9 @@ module Protocol.Message.WriteEvents
 import Data.List.NonEmpty hiding (toList)
 
 --------------------------------------------------------------------------------
-import ClassyPrelude
 import Data.ProtocolBuffers hiding (encode, decode)
 import Data.Serialize hiding (Result)
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 import Protocol.Operation
