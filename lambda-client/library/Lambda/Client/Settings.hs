@@ -12,7 +12,7 @@
 module Lambda.Client.Settings where
 
 --------------------------------------------------------------------------------
-import Lambda.Client.Prelude
+import Lambda.Prelude
 
 --------------------------------------------------------------------------------
 data Settings =

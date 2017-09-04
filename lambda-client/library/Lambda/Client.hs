@@ -16,7 +16,7 @@ module Lambda.Client
   ) where
 
 --------------------------------------------------------------------------------
-import Lambda.Client.Prelude
+import Lambda.Prelude
 import Lambda.Client.Settings
 
 --------------------------------------------------------------------------------

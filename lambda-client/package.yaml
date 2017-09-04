@@ -48,14 +48,9 @@ library:
   dependencies:
     - base
     - lambda-protocol
+    - lambda-prelude
     - connection
-    - classy-prelude
-    - uuid
     - cereal
-    - time
-    - monad-logger
-    - interpolate
-    - fast-logger
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
