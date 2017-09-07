@@ -19,11 +19,11 @@ import Data.Serialize
 import Lambda.Bus
 import Lambda.Logger
 import Lambda.Prelude
+import Lambda.Prelude.Stopwatch
 import Protocol.Package
 
 --------------------------------------------------------------------------------
 import Lambda.Node.Settings
-import Lambda.Node.Stopwatch
 
 --------------------------------------------------------------------------------
 data CheckState
