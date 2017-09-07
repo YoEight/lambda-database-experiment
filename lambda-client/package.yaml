@@ -45,6 +45,8 @@ library:
     - QuasiQuotes
     - MultiParamTypeClasses
     - GeneralizedNewtypeDeriving
+    - RecordWildCards
+    - LambdaCase
   dependencies:
     - base
     - lambda-protocol

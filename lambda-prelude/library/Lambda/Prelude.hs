@@ -20,7 +20,7 @@ module Lambda.Prelude
   , module Control.Monad.Fix
   , module Lambda.Logger
   -- * Lambda
-  , Lambda
+  , Lambda(..)
   , getSettings
   , lambdaMain
   -- * Misc
@@ -114,7 +114,7 @@ instance MonadReader settings (Lambda settings) where
   local k (Lambda m) = Lambda (local (fmap k) m)
 
 --------------------------------------------------------------------------------
-lambdaMain :: settings -> Lambda settings () -> IO ()
+lambdaMain :: settings -> Lambda settings a -> IO a
 lambdaMain s (Lambda m) =
   do env <- loadEnv
      runReaderT m env

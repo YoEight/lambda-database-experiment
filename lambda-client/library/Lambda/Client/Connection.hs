@@ -13,18 +13,190 @@ module Lambda.Client.Connection where
 --------------------------------------------------------------------------------
 import Lambda.Bus
 import Lambda.Prelude
-import Network.Connection
+import Lambda.Prelude.Stopwatch
 
 --------------------------------------------------------------------------------
+import Lambda.Client.EndPoint
 import Lambda.Client.Settings
 import Lambda.Client.TcpConnection
 
 --------------------------------------------------------------------------------
-data Internal =
-  Internal { _internal :: !Int }
+data Attempt =
+  Attempt { attemptCount    :: !Int
+          , attemptLastTime :: !NominalDiffTime
+          }
 
 --------------------------------------------------------------------------------
-new :: Lambda Settings ()
-new = return ()
+freshAttempt :: Internal -> React Settings Attempt
+freshAttempt Internal{..} = Attempt 1 <$> stopwatchElapsed _stopwatch
 
+--------------------------------------------------------------------------------
+data ConnectingState
+  = Reconnecting
+  | ConnectionEstablishing TcpConnection
 
+--------------------------------------------------------------------------------
+data Stage
+  = Init
+  | Connecting Attempt ConnectingState
+  | Connected TcpConnection
+  | Closed
+
+--------------------------------------------------------------------------------
+whenInit :: Internal -> React Settings () -> React Settings ()
+whenInit Internal{..} m =
+  readIORef _stageRef >>= \case
+    Init -> m
+    _    -> pure ()
+
+--------------------------------------------------------------------------------
+whenReconnecting :: Internal
+                 -> (Attempt -> React Settings ())
+                 -> React Settings ()
+whenReconnecting Internal{..} k =
+  readIORef _stageRef >>= \case
+    Connecting att Reconnecting -> k att
+    _                           -> pure ()
+
+--------------------------------------------------------------------------------
+whenConnectionEstablishing :: Internal
+                           -> (Attempt -> TcpConnection -> React Settings ())
+                           -> React Settings ()
+whenConnectionEstablishing Internal{..} k =
+  readIORef _stageRef >>= \case
+    Connecting att (ConnectionEstablishing conn) -> k att conn
+    _                                            -> pure ()
+
+--------------------------------------------------------------------------------
+whenConnectionAvalaible :: Internal
+                        -> (TcpConnection -> React Settings ())
+                        -> React Settings ()
+whenConnectionAvalaible Internal{..} k =
+  readIORef _stageRef >>= \case
+    Connecting _ (ConnectionEstablishing conn) -> k conn
+    Connected conn                             -> k conn
+    _                                          -> pure ()
+
+--------------------------------------------------------------------------------
+switchToReconnecting :: Internal -> Int -> React Settings ()
+switchToReconnecting Internal{..} tries = do
+  elapsed <- stopwatchElapsed _stopwatch
+  let att = Attempt tries elapsed
+  atomicWriteIORef _stageRef (Connecting att Reconnecting)
+
+--------------------------------------------------------------------------------
+switchToConnectionEstablishing :: Internal
+                               -> Attempt
+                               -> TcpConnection
+                               -> React Settings ()
+switchToConnectionEstablishing Internal{..} att conn = do
+  atomicWriteIORef _stageRef (Connecting att (ConnectionEstablishing conn))
+
+--------------------------------------------------------------------------------
+switchToConnected :: Internal -> TcpConnection -> React Settings ()
+switchToConnected Internal{..} conn =
+  atomicWriteIORef _stageRef (Connected conn)
+
+--------------------------------------------------------------------------------
+switchToClosed :: Internal -> React Settings ()
+switchToClosed Internal{..} = atomicWriteIORef _stageRef Closed
+
+--------------------------------------------------------------------------------
+data Internal =
+  Internal { _builder   :: ConnectionBuilder
+           , _stageRef  :: IORef Stage
+           , _stopwatch :: Stopwatch
+           }
+
+--------------------------------------------------------------------------------
+data Tick = Tick
+data Start = Start
+
+--------------------------------------------------------------------------------
+app :: ConnectionBuilder -> Configure Settings ()
+app builder = do
+  self <- Internal builder <$> newIORef Init
+                           <*> newStopwatch
+
+  timer Tick 0.2 Undefinitely
+
+  subscribe (onStart self)
+  subscribe (onEstablished self)
+  subscribe (onConnectionError self)
+  subscribe (onTick self)
+
+--------------------------------------------------------------------------------
+onStart :: Internal -> Start -> React Settings ()
+onStart self _ = startConnecting self
+
+--------------------------------------------------------------------------------
+onEstablished :: Internal -> ConnectionEstablished -> React Settings ()
+onEstablished self (ConnectionEstablished conn) = established self conn
+
+--------------------------------------------------------------------------------
+onConnectionError :: Internal -> ConnectionClosed -> React Settings ()
+onConnectionError self (ConnectionClosed target cause) =
+  whenConnectionAvalaible self $ \conn ->
+    when (conn == target) $
+      closeTcpConnection self cause conn
+
+--------------------------------------------------------------------------------
+onTick :: Internal -> Tick -> React Settings ()
+onTick Internal{..} _ = readIORef _stageRef >>= \case
+  Connecting att state
+    | onGoingConnection state ->
+      do elapsed <- stopwatchElapsed _stopwatch
+         let retries = attemptCount att
+             newAtt  = Attempt retries elapsed
+
+         atomicWriteIORef _stageRef (Connecting newAtt Reconnecting)
+    | otherwise -> pure ()
+  _ -> pure ()
+  where
+    onGoingConnection Reconnecting             = True
+    onGoingConnection ConnectionEstablishing{} = True
+
+--------------------------------------------------------------------------------
+startConnecting :: Internal -> React Settings ()
+startConnecting self = whenInit self $ do
+  switchToReconnecting self 1
+  connecting self
+
+--------------------------------------------------------------------------------
+connecting :: Internal -> React Settings ()
+connecting self@Internal{..} = whenReconnecting self $ \att -> do
+  setts <- reactSettings
+  let endpoint =
+        case connectionType setts of
+          Static host port -> EndPoint host port
+
+  conn <- connect _builder endpoint
+  switchToConnectionEstablishing self att conn
+
+--------------------------------------------------------------------------------
+established :: Internal -> TcpConnection -> React Settings ()
+established self@Internal{..} conn =
+  whenConnectionEstablishing self $ \_ expected ->
+    when (conn == expected) $
+      do logDebug [i|TCP connection established #{conn}.|]
+         switchToConnected self conn
+
+--------------------------------------------------------------------------------
+closeTcpConnection :: Internal
+                   -> SomeException
+                   -> TcpConnection
+                   -> React Settings ()
+closeTcpConnection self@Internal{..} cause conn = do
+  logDebug [i|closeTcpConnection: connection #{conn}. Cause: #{cause}.|]
+  dispose conn
+  logDebug [i|closeTcpConnection: connection #{conn} disposed.|]
+
+  readIORef _stageRef >>= \case
+    Closed -> pure ()
+    stage  ->
+      do att <-
+           case stage of
+             Connecting old _ -> pure old
+             _                -> freshAttempt self
+
+         atomicWriteIORef _stageRef (Connecting att Reconnecting)

@@ -16,17 +16,31 @@ module Lambda.Client
   ) where
 
 --------------------------------------------------------------------------------
+import Lambda.Bus
 import Lambda.Prelude
-import Lambda.Client.Settings
+
+--------------------------------------------------------------------------------
+import qualified Lambda.Client.Connection as Connection
+import           Lambda.Client.Settings
+import           Lambda.Client.TcpConnection
 
 --------------------------------------------------------------------------------
 data Client =
   Client
-  { _settings :: Settings }
+  { _settings :: Settings
+  , _mainBus  :: Bus Settings
+  }
 
 --------------------------------------------------------------------------------
 newClient :: Settings -> IO Client
-newClient = return . Client
+newClient setts = lambdaMain setts $ do
+  mainBus <- newBus
+  builder <- connectionBuilder
+
+  configure mainBus (Connection.app builder)
+
+  let client = Client setts mainBus
+  return client
 
 --------------------------------------------------------------------------------
 newClientWithDefault :: IO Client

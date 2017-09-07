@@ -58,14 +58,14 @@ getConnection ref =
 data TcpConnection =
   TcpConnection { connectionId       :: ConnectionId
                 , connectionEndPoint :: EndPoint
-                , enqueuePkg     :: Pkg -> React Settings ()
+                , enqueuePkg         :: Pkg -> React Settings ()
                 , dispose            :: React Settings ()
                 }
 
 --------------------------------------------------------------------------------
 instance Show TcpConnection where
-  show TcpConnection{..} = "Connection [" <> show connectionId <> "] on "
-                        <> show connectionEndPoint
+  show TcpConnection{..} =
+    [i|"Connection #{connectionId} on show #{connectionEndPoint}.|]
 
 --------------------------------------------------------------------------------
 instance Eq TcpConnection where
