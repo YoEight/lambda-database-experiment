@@ -13,6 +13,7 @@ module Lambda.Client
   ( Client
   , newClient
   , newClientWithDefault
+  , awaitShutdown
   ) where
 
 --------------------------------------------------------------------------------
@@ -41,6 +42,10 @@ newClient setts = lambdaMain setts $ do
 
   let client = Client setts mainBus
   return client
+
+--------------------------------------------------------------------------------
+awaitShutdown :: Client -> IO ()
+awaitShutdown Client{..} = busProcessedEverything _mainBus
 
 --------------------------------------------------------------------------------
 newClientWithDefault :: IO Client

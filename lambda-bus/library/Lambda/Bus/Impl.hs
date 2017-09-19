@@ -49,7 +49,7 @@ busParent :: Bus settings -> Bus settings -> Lambda settings ()
 busParent Bus{..} parent = atomically $ writeTVar _busParent (Just parent)
 
 --------------------------------------------------------------------------------
-busProcessedEverything :: Bus settings -> Lambda settings ()
+busProcessedEverything :: MonadIO m => Bus settings -> m ()
 busProcessedEverything Bus{..} = waitAsync _workerAsync
 
 --------------------------------------------------------------------------------

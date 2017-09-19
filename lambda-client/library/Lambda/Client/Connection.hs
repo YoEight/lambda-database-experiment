@@ -14,6 +14,7 @@ module Lambda.Client.Connection where
 import Lambda.Bus
 import Lambda.Prelude
 import Lambda.Prelude.Stopwatch
+import Protocol.Package
 
 --------------------------------------------------------------------------------
 import Lambda.Client.EndPoint
@@ -120,10 +121,12 @@ app builder = do
 
   timer Tick 0.2 Undefinitely
 
-  subscribe (onStart self)
   subscribe (onEstablished self)
   subscribe (onConnectionError self)
+  subscribe (onPackageArrived self)
   subscribe (onTick self)
+
+  appStart $ startConnecting self
 
 --------------------------------------------------------------------------------
 onStart :: Internal -> Start -> React Settings ()
@@ -141,15 +144,18 @@ onConnectionError self (ConnectionClosed target cause) =
       closeTcpConnection self cause conn
 
 --------------------------------------------------------------------------------
+onPackageArrived :: Internal -> PkgArrived -> React Settings ()
+onPackageArrived self (PkgArrived sender pkg) = packageArrived self sender pkg
+
+--------------------------------------------------------------------------------
 onTick :: Internal -> Tick -> React Settings ()
-onTick Internal{..} _ = readIORef _stageRef >>= \case
+onTick self@Internal{..} _ = readIORef _stageRef >>= \case
   Connecting att state
     | onGoingConnection state ->
-      do elapsed <- stopwatchElapsed _stopwatch
-         let retries = attemptCount att
-             newAtt  = Attempt retries elapsed
-
-         atomicWriteIORef _stageRef (Connecting newAtt Reconnecting)
+      do let retries = attemptCount att + 1
+         switchToReconnecting self retries
+         logDebug [i|Checking reconnection... (attempt #{retries}).|]
+         connecting self
     | otherwise -> pure ()
   _ -> pure ()
   where
@@ -180,6 +186,17 @@ established self@Internal{..} conn =
     when (conn == expected) $
       do logDebug [i|TCP connection established #{conn}.|]
          switchToConnected self conn
+
+--------------------------------------------------------------------------------
+packageArrived :: Internal -> TcpConnection -> Pkg -> React Settings ()
+packageArrived self sender pkg =
+  whenConnectionAvalaible self $ \known ->
+    when (known == sender) $
+      case pkgCmd pkg of
+        0x01 ->
+          let newPkg = pkg { pkgCmd = 0x02 }
+           in enqueuePkg sender newPkg
+        _ -> logDebug [i|Package ignored #{pkg}.|]
 
 --------------------------------------------------------------------------------
 closeTcpConnection :: Internal
