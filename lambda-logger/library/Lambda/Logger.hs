@@ -24,6 +24,7 @@ module Lambda.Logger
 
 --------------------------------------------------------------------------------
 import Control.Monad
+import Data.Semigroup ((<>))
 
 --------------------------------------------------------------------------------
 import Control.Monad.Logger hiding (logDebug, logInfo, logWarn, logError, logOther, logWarnSH, logOtherSH, logDebugSH, logInfoSH, logErrorSH)
@@ -60,8 +61,25 @@ loggerFormat :: TimedFastLogger
              -> (Loc -> LogSource -> LogLevel -> LogStr -> IO ())
 loggerFormat logger = \loc src lvl msg ->
   logger $ \t ->
-    toLogStr ("["`mappend` t `mappend`"]") `mappend` " eventstore "
-                                           `mappend` defaultLogStr loc src lvl msg
+    toLogStr ("["`mappend` t `mappend`"]") `mappend` lambdaLogStr loc src lvl msg
+
+--------------------------------------------------------------------------------
+lambdaLogStr :: Loc -> LogSource -> LogLevel -> LogStr -> LogStr
+lambdaLogStr loc src lvl msg =
+  [i|[#{lvlTxt}]:#{loc_module loc}:#{line}:#{col}: |]
+    <> msg
+    <> "\n"
+  where
+    lvlTxt =
+      case lvl of
+        LevelDebug   -> "DEBUG"
+        LevelInfo    -> "INFO"
+        LevelWarn    -> "WARN"
+        LevelError   -> "ERROR"
+        LevelOther o -> o
+
+    (line, col) = loc_start loc
+
 
 --------------------------------------------------------------------------------
 newLoggerRef :: LogType -> LoggerFilter -> Bool -> IO LoggerRef

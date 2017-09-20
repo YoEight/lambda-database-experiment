@@ -6,6 +6,7 @@ description: LDE logging infrastructure.
 
 default-extensions:
   - OverloadedStrings
+  - QuasiQuotes
 
 extra-source-files:
 - CHANGELOG.md
