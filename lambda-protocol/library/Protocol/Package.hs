@@ -50,7 +50,7 @@ instance Serialize PkgId where
       Nothing   -> mzero
 
 --------------------------------------------------------------------------------
-newtype PkgPrefix = PkgPrefix Word32
+newtype PkgPrefix = PkgPrefix Word32 deriving Num
 
 --------------------------------------------------------------------------------
 pkgPrefixIntegral :: Integral a => PkgPrefix -> a
@@ -66,7 +66,7 @@ data Pkg =
   Pkg { pkgCmd     :: Cmd
       , pkgId      :: PkgId
       , pkgPayload :: ByteString
-      }
+      } deriving Eq
 
 --------------------------------------------------------------------------------
 pkgPrefix :: Pkg -> PkgPrefix
@@ -77,7 +77,9 @@ instance Serialize Pkg where
   put pkg = do
     put $ pkgPrefix pkg
     put $ pkgCmd pkg
-    put $ pkgPayload pkg
+    put $ pkgId pkg
+    put $ pkgPayload pkg -- probably have to check if cereal prefix this
+                         -- when serializing.
 
   get =
     Pkg <$> get
