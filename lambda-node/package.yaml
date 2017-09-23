@@ -37,6 +37,7 @@ dependencies:
   - lambda-prelude
   - lambda-logger
   - lambda-bus
+  - connection
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase

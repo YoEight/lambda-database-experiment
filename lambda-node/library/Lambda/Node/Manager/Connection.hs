@@ -20,6 +20,7 @@ import Lambda.Bus
 import Lambda.Logger
 import Lambda.Prelude
 import Lambda.Prelude.Stopwatch
+import Network.Connection
 import Protocol.Package
 
 --------------------------------------------------------------------------------
@@ -73,7 +74,7 @@ manageHeartbeat self@ClientSocket{..} = do
 --------------------------------------------------------------------------------
 data ClientSocket =
   ClientSocket
-  { _clientSocket    :: !Socket
+  { _clientConn      :: !Connection
   , _clientAddr      :: !SockAddr
   , _clientStopwatch :: !Stopwatch
   , _clientQueue     :: !(TBMQueue Pkg)
@@ -123,9 +124,9 @@ clientApp self = do
        logInfo [i|New connection #{clientId} on #{_clientAddr self}|]
 
 --------------------------------------------------------------------------------
-newClientSocket :: Socket -> SockAddr -> Configure s ClientSocket
-newClientSocket sock addr =
-  ClientSocket sock addr
+newClientSocket :: Connection -> SockAddr -> Configure s ClientSocket
+newClientSocket conn addr =
+  ClientSocket conn addr
     <$> newStopwatch
     <*> (liftIO $ newTBMQueueIO 500)
     <*> newIORef 0
@@ -134,58 +135,43 @@ newClientSocket sock addr =
 
 --------------------------------------------------------------------------------
 servingFork :: Bus Settings -> ConnectionSettings -> React Settings ()
-servingFork mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run ->
+servingFork mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run -> do
+  ctx   <- initConnectionContext
+
   serve (Host hostname) (show portNumber) $ \(sock, addr) -> run $ reactLambda $
-    do child <- busNewChild mainBus
-       configure child (clientConf sock addr)
+    do conn <- liftIO $ connectFromSocket ctx sock connectionParams
+       child <- busNewChild mainBus
+       configure child (clientConf conn addr)
        busProcessedEverything child
   where
     clientConf sock addr =
       newClientSocket sock addr >>= clientApp
 
---------------------------------------------------------------------------------
-processingIncomingPackage :: ClientSocket -> React Settings ()
-processingIncomingPackage self@ClientSocket{..} = handleAny onError $ forever $ do
-  prefixBytes <- liftIO $ recvExact self 4
-  case decode prefixBytes of
-    Left _    -> throwString "Wrong package framing."
-    Right len -> do
-      payload <- liftIO $ recvExact self len
-      case decode payload of
-        Left e    -> throwString [i|Package parsing error #{e}.|]
-        Right pkg -> publish (PackageArrived pkg)
+    connectionParams =
+      ConnectionParams hostname portNumber Nothing Nothing
 
 --------------------------------------------------------------------------------
-recvExact :: ClientSocket -> Int -> IO ByteString
-recvExact ClientSocket{..} start = loop mempty start
-  where
-    loop acc 0 = return acc
-    loop acc want = do
-      recv _clientSocket want >>= \case
-        Nothing -> throwString "Remote end close the connection"
-        Just bs
-          | length bs == want -> return (acc <> bs)
-          | otherwise -> loop (acc <> bs) (want - length bs)
+processingIncomingPackage :: ClientSocket -> React Settings ()
+processingIncomingPackage ClientSocket{..} =
+  handleAny onError $ forever $ do
+    prefixBytes <- liftIO $ connectionGetExact _clientConn 4
+    case decode prefixBytes of
+      Left _ -> throwString [i|Wrong package framing.]|]
+      Right (PkgPrefix len) -> do
+        payload <- liftIO $ connectionGetExact _clientConn (fromIntegral len)
+        case decode payload of
+          Left e    -> throwString [i|Package parsing error #{e}.|]
+          Right pkg -> publish (PackageArrived pkg)
 
 --------------------------------------------------------------------------------
 processingOutgoingPackage :: ClientSocket -> React Settings ()
-processingOutgoingPackage ClientSocket{..} = handleAny onError $ forever $ do
-  clientId <- reactSelfId
-  msgs <- atomically $ nextBatchSTM clientId
-  liftIO $ sendMany _clientSocket msgs
+processingOutgoingPackage ClientSocket{..} = handleAny onError loop
   where
-    nextBatchSTM clientId =
-      let loop = do
-            tryReadTBMQueue _clientQueue >>= \case
-              Nothing   -> fail [i|Connection #{clientId} queue closed.|]
-              Just mMsg ->
-                case mMsg of
-                  Nothing  -> return []
-                  Just pkg -> fmap (encode pkg:) loop
-
-       in loop >>= \case
-            [] -> retrySTM
-            xs -> return xs
+    loop = do
+      msg <- atomically $ readTBMQueue _clientQueue
+      for_ msg $ \pkg ->
+        do liftIO $ connectionPut _clientConn (encode pkg)
+           loop
 
 --------------------------------------------------------------------------------
 enqueuePkg :: ClientSocket -> Pkg -> React Settings ()
