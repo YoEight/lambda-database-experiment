@@ -78,8 +78,7 @@ instance Serialize Pkg where
     put $ pkgPrefix pkg
     put $ pkgCmd pkg
     put $ pkgId pkg
-    put $ pkgPayload pkg -- probably have to check if cereal prefix this
-                         -- when serializing.
+    putByteString $ pkgPayload pkg
 
   get =
     Pkg <$> get
