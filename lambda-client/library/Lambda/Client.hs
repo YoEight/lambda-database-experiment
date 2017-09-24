@@ -34,7 +34,7 @@ data Client =
 
 --------------------------------------------------------------------------------
 newClient :: Settings -> IO Client
-newClient setts = lambdaMain setts $ do
+newClient setts = lambdaMain_ setts $ do
   mainBus <- newBus
   builder <- connectionBuilder
 

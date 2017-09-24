@@ -24,45 +24,30 @@ data Settings =
   { heartbeatInterval  :: !NominalDiffTime
   , heartbeatTimeout   :: !NominalDiffTime
   , connectionSettings :: !ConnectionSettings
-  , loggingSettings    :: !LoggingSettings
   }
 
 --------------------------------------------------------------------------------
-instance Show Settings where
-  show = render . ppSettings
+instance PrettyPrint Settings where
+  pprint Settings{..} =
+    vcat [ text "heartbeat-interval: " <+> text (show heartbeatInterval)
+         , text "heartbeat-timeout:"   <+> text (show heartbeatTimeout)
+         , text "Connection settings:"
+         , nest 5 (ppConnectionSettings connectionSettings)
+         ]
 
 --------------------------------------------------------------------------------
-ppSettings :: Settings -> Doc
-ppSettings Settings{..} =
-  vcat [ "Settings:"
-       , nest 5 $
-           vcat [ text "heartbeat-interval: " <+> text (show heartbeatInterval)
-                , text "heartbeat-timeout:"   <+> text (show heartbeatTimeout)
-                , text "Connection settings:"
-                , nest 5 (ppConnectionSettings connectionSettings)
-                , text "Logging Settings:"
-                , nest 5 (ppLoggingSettings loggingSettings)
-                ]
-       ]
+instance AppSettings Settings where
+  settingsParser = parseSettings
 
---------------------------------------------------------------------------------
-parseArgs :: IO Settings
-parseArgs = execParser settingsParser
-
---------------------------------------------------------------------------------
-settingsParser :: ParserInfo Settings
-settingsParser = info (helper <*> parseSettings) description
-  where
-    description =
-      fullDesc <> header "LDE - Lambda Database Experiment."
-               <> progDesc "Starts the LDE server."
+  description _ =
+    fullDesc <> header "LDE - Lambda Database Experiment."
+             <> progDesc "Starts the LDE server."
 
 --------------------------------------------------------------------------------
 parseSettings :: Parser Settings
 parseSettings = Settings <$> parseHeartbeatInterval
                          <*> parseHeartbeatTimeout
                          <*> parseConnectionSettings
-                         <*> parseLoggingSettings
 
 --------------------------------------------------------------------------------
 parseHeartbeatInterval :: Parser NominalDiffTime
@@ -134,72 +119,3 @@ parsePort = option (eitherReader check) go
         Just port
            | port > 0 && port < 65535 -> Right port
            | otherwise -> Left [i|Port should be ]0-65535[|]
-
---------------------------------------------------------------------------------
-data LoggingSettings =
-  LoggingSettings
-  { loggingType  :: !LogType
-  , loggingLevel :: !LoggerFilter
-  }
-
---------------------------------------------------------------------------------
-ppLoggingSettings :: LoggingSettings -> Doc
-ppLoggingSettings LoggingSettings{..} =
-  vcat [ text "logging-type:"  <+> ppLogType loggingType
-       , text "logging-level:" <+> ppLogFilter loggingLevel
-       ]
-
---------------------------------------------------------------------------------
-ppLogType :: LogType -> Doc
-ppLogType LogStdout{}              = text "stdout"
-ppLogType LogStderr{}              = text "stderr"
-ppLogType (LogFileNoRotate path _) = text path
-ppLogType _                        = text "*not supported*"
-
---------------------------------------------------------------------------------
-ppLogFilter :: LoggerFilter -> Doc
-ppLogFilter (LoggerLevel lvl) = ppLogLevel lvl
-ppLogFilter _                 = text "*not supported*"
-
---------------------------------------------------------------------------------
-ppLogLevel :: LogLevel -> Doc
-ppLogLevel LevelDebug = text "debug"
-ppLogLevel LevelInfo  = text "info"
-ppLogLevel LevelWarn  = text "warn"
-ppLogLevel LevelError = text "error"
-ppLogLevel _          = text "*not supported*"
-
---------------------------------------------------------------------------------
-parseLoggingSettings :: Parser LoggingSettings
-parseLoggingSettings =
-  LoggingSettings <$> parseLoggingType
-                  <*> parseLoggingLevel
-
---------------------------------------------------------------------------------
-parseLoggingType :: Parser LogType
-parseLoggingType = to <$> strOption go
-  where
-    go = long "logging-type" <> metavar "LOGGING_TYPE"
-                             <> help "Logging type: stdout, stderr or a file path"
-                             <> value "stdout"
-                             <> showDefault
-
-    to "stdout" = LogStdout 0
-    to "stderr" = LogStderr 0
-    to filepath = LogFileNoRotate filepath 0
-
---------------------------------------------------------------------------------
-parseLoggingLevel :: Parser LoggerFilter
-parseLoggingLevel = (LoggerLevel . to) <$> strOption go
-  where
-    go = long "logging-level" <> metavar "LOGGING_LEVEL"
-                              <> help "Logging level: debug, info, warn and error"
-                              <> value "info"
-                              <> showDefault
-
-    to :: String -> LogLevel
-    to "debug" = LevelDebug
-    to "info"  = LevelInfo
-    to "warn"  = LevelWarn
-    to "error" = LevelError
-    to _       = LevelInfo

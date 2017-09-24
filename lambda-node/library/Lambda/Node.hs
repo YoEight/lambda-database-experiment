@@ -14,17 +14,11 @@ module Lambda.Node (nodeMain) where
 --------------------------------------------------------------------------------
 import           Lambda.Bus
 import qualified Lambda.Node.Manager.Connection as Connection
-import           Lambda.Node.Settings
 import           Lambda.Prelude
 
 --------------------------------------------------------------------------------
 nodeMain :: IO ()
-nodeMain = do
-  setts <- parseArgs
-  print setts
-  lambdaMain setts go
-  where
-    go =
-      do mainBus <- newBus
-         Connection.new mainBus
-         busProcessedEverything mainBus
+nodeMain = lambdaMain $ do
+  mainBus <- newBus
+  Connection.new mainBus
+  busProcessedEverything mainBus

@@ -12,6 +12,7 @@ ghc-options: -Wall
 library:
   default-extensions:
     - NoImplicitPrelude
+    - RecordWildCards
   dependencies:
   - base
   - classy-prelude
@@ -21,6 +22,8 @@ library:
   - time
   - lambda-logger
   - mtl
+  - pretty
+  - optparse-applicative
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
