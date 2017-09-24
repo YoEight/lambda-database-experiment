@@ -14,11 +14,17 @@ module Lambda.Client
   , newClient
   , newClientWithDefault
   , awaitShutdown
+  , writeEvents
   ) where
+
+--------------------------------------------------------------------------------
+import Data.List.NonEmpty
 
 --------------------------------------------------------------------------------
 import Lambda.Bus
 import Lambda.Prelude
+import Protocol.Operation
+import Protocol.Types
 
 --------------------------------------------------------------------------------
 import qualified Lambda.Client.Connection as Connection
@@ -44,9 +50,44 @@ newClient setts = lambdaMain_ setts $ do
   return client
 
 --------------------------------------------------------------------------------
+data WriteResult =
+  WriteResult
+  { eventNumber :: !EventNumber
+  , result      :: !WriteResultFlag
+  }
+
+--------------------------------------------------------------------------------
+writeEvents :: Client
+            -> StreamName
+            -> NonEmpty Event
+            -> ExpectedVersion
+            -> IO (Async WriteResult)
+writeEvents self name events version =
+  fmap (fmap convert) $ submitRequest self req
+  where
+    req = WriteEvents name version events
+
+    convert (WriteEventsResp num flag) =
+      WriteResult num flag
+
+--------------------------------------------------------------------------------
 awaitShutdown :: Client -> IO ()
 awaitShutdown Client{..} = busProcessedEverything _mainBus
 
 --------------------------------------------------------------------------------
 newClientWithDefault :: IO Client
 newClientWithDefault = newClient defaultSettings
+
+--------------------------------------------------------------------------------
+submitRequest :: Client -> Request a -> IO (Async a)
+submitRequest Client{..} req = do
+  var <- newEmptyMVar
+  let evt = Connection.NewRequest req (putMVar var)
+      msg = Message
+            { messagePayload = evt
+            , messageSender  = _busId _mainBus
+            , messageTarget  = Nothing
+            }
+
+  atomically $ publishSTM _mainBus msg
+  async (either throwString pure =<< takeMVar var)

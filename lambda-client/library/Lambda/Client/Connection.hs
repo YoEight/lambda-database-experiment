@@ -14,12 +14,17 @@ module Lambda.Client.Connection where
 import Lambda.Bus
 import Lambda.Prelude
 import Lambda.Prelude.Stopwatch
+import Protocol.Operation
 import Protocol.Package
 
 --------------------------------------------------------------------------------
 import Lambda.Client.EndPoint
 import Lambda.Client.Settings
 import Lambda.Client.TcpConnection
+
+--------------------------------------------------------------------------------
+data NewRequest where
+  NewRequest :: Request a -> (Either String a -> IO ()) -> NewRequest
 
 --------------------------------------------------------------------------------
 data Attempt =
@@ -125,6 +130,7 @@ app builder = do
   subscribe (onConnectionError self)
   subscribe (onPackageArrived self)
   subscribe (onTick self)
+  subscribe (onNewRequest self)
 
   appStart $ startConnecting self
 
@@ -217,3 +223,8 @@ closeTcpConnection self@Internal{..} cause conn = do
              _                -> freshAttempt self
 
          atomicWriteIORef _stageRef (Connecting att Reconnecting)
+
+--------------------------------------------------------------------------------
+onNewRequest :: Internal -> NewRequest -> React Settings ()
+onNewRequest self (NewRequest req respond) = return ()
+
