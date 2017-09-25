@@ -28,6 +28,7 @@ import Protocol.Types
 
 --------------------------------------------------------------------------------
 import qualified Lambda.Client.Connection as Connection
+import qualified Lambda.Client.Messages   as Messages
 import           Lambda.Client.Settings
 import           Lambda.Client.TcpConnection
 
@@ -82,7 +83,7 @@ newClientWithDefault = newClient defaultSettings
 submitRequest :: Client -> Request a -> IO (Async a)
 submitRequest Client{..} req = do
   var <- newEmptyMVar
-  let evt = Connection.NewRequest req (putMVar var)
+  let evt = Messages.NewRequest req (putMVar var)
       msg = Message
             { messagePayload = evt
             , messageSender  = _busId _mainBus

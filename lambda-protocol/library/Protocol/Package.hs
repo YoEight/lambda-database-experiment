@@ -28,15 +28,15 @@ instance Serialize Cmd where
   get = Cmd <$> getWord8
 
 --------------------------------------------------------------------------------
-newtype PkgId = PkgId UUID deriving (Eq, Ord)
+newtype PkgId = PkgId UUID deriving (Eq, Ord, Hashable)
 
 --------------------------------------------------------------------------------
 instance Show PkgId where
   show (PkgId pid) = [i|[#{pid}]|]
 
 --------------------------------------------------------------------------------
-freshPkgId :: IO PkgId
-freshPkgId = PkgId <$> nextRandom
+freshPkgId :: MonadIO m => m PkgId
+freshPkgId = liftIO (PkgId <$> nextRandom)
 
 --------------------------------------------------------------------------------
 instance Serialize PkgId where

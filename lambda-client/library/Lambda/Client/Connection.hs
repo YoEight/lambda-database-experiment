@@ -18,13 +18,11 @@ import Protocol.Operation
 import Protocol.Package
 
 --------------------------------------------------------------------------------
-import Lambda.Client.EndPoint
-import Lambda.Client.Settings
-import Lambda.Client.TcpConnection
-
---------------------------------------------------------------------------------
-data NewRequest where
-  NewRequest :: Request a -> (Either String a -> IO ()) -> NewRequest
+import           Lambda.Client.EndPoint
+import           Lambda.Client.Messages
+import qualified Lambda.Client.Operation as Operation
+import           Lambda.Client.Settings
+import           Lambda.Client.TcpConnection
 
 --------------------------------------------------------------------------------
 data Attempt =
@@ -111,6 +109,7 @@ switchToClosed Internal{..} = atomicWriteIORef _stageRef Closed
 data Internal =
   Internal { _builder   :: ConnectionBuilder
            , _stageRef  :: IORef Stage
+           , _ops       :: Operation.Manager
            , _stopwatch :: Stopwatch
            }
 
@@ -121,8 +120,16 @@ data Start = Start
 --------------------------------------------------------------------------------
 app :: ConnectionBuilder -> Configure Settings ()
 app builder = do
-  self <- Internal builder <$> newIORef Init
-                           <*> newStopwatch
+  ref  <- newIORef Init
+  let connRef = ConnectionRef $
+        do stage <- readIORef ref
+           case stage of
+             Connecting _ (ConnectionEstablishing conn) -> pure (Just conn)
+             Connected conn                             -> pure (Just conn)
+             _                                          -> pure Nothing
+
+  self <- Internal builder ref <$> Operation.new connRef
+                               <*> newStopwatch
 
   timer Tick 0.2 Undefinitely
 
@@ -163,6 +170,9 @@ onTick self@Internal{..} _ = readIORef _stageRef >>= \case
          logDebug [i|Checking reconnection... (attempt #{retries}).|]
          connecting self
     | otherwise -> pure ()
+
+  Connected{} -> Operation.tick _ops
+
   _ -> pure ()
   where
     onGoingConnection Reconnecting             = True
@@ -202,7 +212,7 @@ packageArrived self sender pkg =
         0x01 ->
           let newPkg = pkg { pkgCmd = 0x02 }
            in enqueuePkg sender newPkg
-        _ -> logDebug [i|Package ignored #{pkg}.|]
+        _ -> Operation.arrived (_ops self) pkg
 
 --------------------------------------------------------------------------------
 closeTcpConnection :: Internal
@@ -226,5 +236,5 @@ closeTcpConnection self@Internal{..} cause conn = do
 
 --------------------------------------------------------------------------------
 onNewRequest :: Internal -> NewRequest -> React Settings ()
-onNewRequest self (NewRequest req respond) = return ()
+onNewRequest Internal{..} request = Operation.submit _ops request
 
