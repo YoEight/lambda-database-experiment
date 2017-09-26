@@ -82,7 +82,7 @@ int32ver n    = ExactVersion $ EventNumber n
 --------------------------------------------------------------------------------
 createPkg :: PkgId -> StreamName -> ExpectedVersion -> NonEmpty Event -> Pkg
 createPkg pid name ver xs =
-  Pkg { pkgCmd     = 0x02
+  Pkg { pkgCmd     = 0x03
       , pkgId      = pid
       , pkgPayload = runPut $ encodeMessage req
       }
@@ -102,7 +102,7 @@ createPkg pid name ver xs =
 --------------------------------------------------------------------------------
 createRespPkg :: PkgId -> EventNumber -> WriteResultFlag -> Pkg
 createRespPkg pid (EventNumber n) flag =
-  Pkg { pkgCmd     = 0x03
+  Pkg { pkgCmd     = 0x04
       , pkgId      = pid
       , pkgPayload = runPut $ encodeMessage resp
       }

@@ -77,10 +77,12 @@ submit Manager{..} (NewRequest req respond) =
 
          modifyIORef' pendings (insertMap pkgId pending)
          enqueuePkg conn pkg
+         logDebug "New request package enqueued."
 
     Nothing ->
-      let awaiting = Awaiting req respond
-       in modifyIORef' awaitings (`snoc` awaiting)
+      do logDebug "Connection not available. Add request to the waiting queue."
+         let awaiting = Awaiting req respond
+         modifyIORef' awaitings (`snoc` awaiting)
 
 --------------------------------------------------------------------------------
 arrived :: Manager -> Pkg -> React Settings ()
@@ -102,8 +104,10 @@ arrived Manager{..} pkg@Pkg{..} = do
 --        has timeout.
 tick :: Manager -> React Settings ()
 tick self@Manager{..} = do
+  logDebug "Enter tick..."
   as <- atomicModifyIORef' awaitings $ \cur -> (mempty, cur)
   traverse_ submitting as
+  logDebug "Leave tick."
   where
     submitting (Awaiting req respond) =
       submit self (NewRequest req respond)

@@ -60,7 +60,7 @@ instance Encode ReadResp
 --------------------------------------------------------------------------------
 createPkg :: PkgId -> StreamName -> Batch -> Pkg
 createPkg pid (StreamName name) (Batch (EventNumber start) size) =
-  Pkg { pkgCmd     = 0x04
+  Pkg { pkgCmd     = 0x05
       , pkgId      = pid
       , pkgPayload = runPut $ encodeMessage req
       }
@@ -79,7 +79,7 @@ createRespPkg :: PkgId
               -> Bool
               -> Pkg
 createRespPkg pid name xs flag (EventNumber num) eos =
-  Pkg { pkgCmd     = 0x05
+  Pkg { pkgCmd     = 0x06
       , pkgId      = pid
       , pkgPayload = runPut $ encodeMessage resp
       }

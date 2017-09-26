@@ -11,10 +11,14 @@
 --------------------------------------------------------------------------------
 module Lambda.Client
   ( Client
+  , WriteResult(..)
+  , ReadStreamResult(..)
   , newClient
   , newClientWithDefault
   , awaitShutdown
   , writeEvents
+  , readEvents
+  , module Protocol.Types
   ) where
 
 --------------------------------------------------------------------------------
@@ -24,7 +28,7 @@ import Data.List.NonEmpty
 import Lambda.Bus
 import Lambda.Prelude
 import Protocol.Operation
-import Protocol.Types
+import Protocol.Types hiding (streamName, eventNumber)
 
 --------------------------------------------------------------------------------
 import qualified Lambda.Client.Connection as Connection
@@ -55,7 +59,7 @@ data WriteResult =
   WriteResult
   { eventNumber :: !EventNumber
   , result      :: !WriteResultFlag
-  }
+  } deriving Show
 
 --------------------------------------------------------------------------------
 writeEvents :: Client
@@ -70,6 +74,26 @@ writeEvents self name events version =
 
     convert (WriteEventsResp num flag) =
       WriteResult num flag
+
+--------------------------------------------------------------------------------
+data ReadStreamResult =
+  ReadStreamResult
+  { streamName      :: !StreamName
+  , events          :: ![SavedEvent]
+  , flag            :: !ReadResultFlag
+  , nextEventNumber :: !EventNumber
+  , endOfStream     :: !Bool
+  } deriving Show
+
+--------------------------------------------------------------------------------
+readEvents :: Client -> StreamName -> Batch -> IO (Async ReadStreamResult)
+readEvents self name batch =
+  fmap (fmap convert) $ submitRequest self req
+  where
+    req = ReadEvents name batch
+
+    convert (ReadEventsResp n xs fl num eos) =
+      ReadStreamResult n xs fl num eos
 
 --------------------------------------------------------------------------------
 awaitShutdown :: Client -> IO ()
@@ -90,5 +114,5 @@ submitRequest Client{..} req = do
             , messageTarget  = Nothing
             }
 
-  atomically $ publishSTM _mainBus msg
+  _ <- atomically $ publishSTM _mainBus msg
   async (either throwString pure =<< takeMVar var)

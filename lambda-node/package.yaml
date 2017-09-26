@@ -67,6 +67,7 @@ library:
   - cereal
   - time
   - pretty
+  - aeson
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa

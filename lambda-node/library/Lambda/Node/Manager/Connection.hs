@@ -15,6 +15,8 @@ module Lambda.Node.Manager.Connection (new) where
 import Network.Simple.TCP
 
 --------------------------------------------------------------------------------
+import Data.Aeson (object, (.=))
+import qualified Data.Aeson as Aeson
 import Data.Serialize
 import Lambda.Bus
 import Lambda.Logger
@@ -22,6 +24,9 @@ import Lambda.Prelude
 import Lambda.Prelude.Stopwatch
 import Network.Connection
 import Protocol.Package
+import Protocol.Message
+import Protocol.Operation
+import Protocol.Types
 
 --------------------------------------------------------------------------------
 import Lambda.Node.Settings
@@ -200,14 +205,41 @@ onTick self _ = manageHeartbeat self
 
 --------------------------------------------------------------------------------
 onPackageArrived :: ClientSocket -> PackageArrived -> React Settings ()
-onPackageArrived self@ClientSocket{..} (PackageArrived Pkg{..}) = do
+onPackageArrived self@ClientSocket{..} (PackageArrived pkg@Pkg{..}) = do
   incrPkgNum self
   logDebug [i|Package #{pkgId} arrived.|]
 
   case pkgCmd of
     0x01 -> enqueuePkg self (heartbeatResponse pkgId)
     0x02 -> return ()
-    _    -> logDebug "Received a request not handled yet."
+    _    ->
+      case parseOp pkg of
+        Nothing -> logError [i|Wrong operation format on #{pkg}.|]
+        Just (SomeOperation op) -> do
+          logDebug "Received new operation."
+          handleOperation self op
+
+--------------------------------------------------------------------------------
+handleOperation :: ClientSocket -> Operation a -> React Settings ()
+handleOperation self op@(Operation _ req) =
+  case req of
+    WriteEvents{} ->
+      let resp = WriteEventsResp 1 WriteSuccess
+          pkg  = createRespPkg op resp
+       in enqueuePkg self pkg
+    ReadEvents name _ -> do
+      eid <- freshId
+      let payload = object [ "IsHaskellTheBest" .= True ]
+          evt     = Event { eventType = "lde-mockup"
+                          , eventId   = eid
+                          , eventPayload = Data $ toStrict $ Aeson.encode $ payload
+                          , eventMetadata = Nothing
+                          }
+          saved = SavedEvent 1 evt
+          resp  = ReadEventsResp name [saved] ReadSuccess (-1) True
+          pkg   = createRespPkg op resp
+
+      enqueuePkg self pkg
 
 --------------------------------------------------------------------------------
 onError :: SomeException -> React s ()

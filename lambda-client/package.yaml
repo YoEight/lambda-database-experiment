@@ -62,11 +62,18 @@ name: lambda-client
 synopsis: A new Haskeleton package.
 tests:
   lambda-client-test-suite:
+    default-extensions:
+      - NoImplicitPrelude
+      - OverloadedStrings
+
     dependencies:
     - base
     - lambda-client
     - tasty
     - tasty-hspec
+    - aeson
+    - async
+    - classy-prelude
     ghc-options:
     - -rtsopts
     - -threaded
