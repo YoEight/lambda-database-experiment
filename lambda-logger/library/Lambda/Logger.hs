@@ -65,7 +65,7 @@ loggerFormat logger = \loc src lvl msg ->
 
 --------------------------------------------------------------------------------
 lambdaLogStr :: Loc -> LogSource -> LogLevel -> LogStr -> LogStr
-lambdaLogStr loc src lvl msg =
+lambdaLogStr loc _ lvl msg =
   [i|[#{lvlTxt}]:#{loc_module loc}:#{line}:#{col}: |]
     <> msg
     <> "\n"

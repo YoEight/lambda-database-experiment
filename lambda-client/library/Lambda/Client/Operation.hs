@@ -28,18 +28,20 @@ import Lambda.Client.TcpConnection
 
 --------------------------------------------------------------------------------
 data Meta =
-  Meta { attempts :: !Natural
-       , started  :: !NominalDiffTime
+  Meta { attempts    :: !Natural
+       , correlation :: !PkgId
+       , started     :: !NominalDiffTime
        }
 
 --------------------------------------------------------------------------------
 newMeta :: Stopwatch -> React Settings Meta
-newMeta s = Meta 0 <$> stopwatchElapsed s
+newMeta s = Meta 0 <$> freshPkgId
+                   <*> stopwatchElapsed s
 
 --------------------------------------------------------------------------------
 data Pending where
   Pending :: Meta
-          -> Operation a
+          -> Request a
           -> (Either String a -> IO ())
           -> Pending
 
@@ -66,23 +68,20 @@ new ref =
 
 --------------------------------------------------------------------------------
 submit :: Manager -> NewRequest -> React Settings ()
-submit Manager{..} (NewRequest req respond) =
+submit Manager{..} (NewRequest req callback) =
   maybeConnection connRef >>= \case
     Just conn ->
-      do pkgId <- freshPkgId
-         meta  <- newMeta stopwatch
-         let op      = Operation pkgId req
-             pending = Pending meta op respond
+      do meta  <- newMeta stopwatch
+         let op      = Operation (correlation meta) req
+             pending = Pending meta req callback
              pkg     = createPkg op
 
-         modifyIORef' pendings (insertMap pkgId pending)
+         modifyIORef' pendings (insertMap (correlation meta) pending)
          enqueuePkg conn pkg
-         logDebug "New request package enqueued."
 
     Nothing ->
-      do logDebug "Connection not available. Add request to the waiting queue."
-         let awaiting = Awaiting req respond
-         modifyIORef' awaitings (`snoc` awaiting)
+      let awaiting = Awaiting req callback
+       in modifyIORef' awaitings (`snoc` awaiting)
 
 --------------------------------------------------------------------------------
 arrived :: Manager -> Pkg -> React Settings ()
@@ -90,7 +89,7 @@ arrived Manager{..} pkg@Pkg{..} = do
   reg <- readIORef pendings
   case lookup pkgId reg of
     Nothing -> logWarn [i|Unknown request #{pkgId} response. Discarded.|]
-    Just (Pending _ op@(Operation _ req) callback) ->
+    Just (Pending _ req callback) ->
       do case parseResp pkg req of
            Nothing ->
              do logError [i|Unexpected request response on #{pkgId}. Discarded|]
@@ -109,6 +108,6 @@ tick self@Manager{..} = do
   traverse_ submitting as
   logDebug "Leave tick."
   where
-    submitting (Awaiting req respond) =
-      submit self (NewRequest req respond)
+    submitting (Awaiting req callback) =
+      submit self (NewRequest req callback)
 

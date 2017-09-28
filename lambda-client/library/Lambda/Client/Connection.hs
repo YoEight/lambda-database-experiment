@@ -14,7 +14,6 @@ module Lambda.Client.Connection where
 import Lambda.Bus
 import Lambda.Prelude
 import Lambda.Prelude.Stopwatch
-import Protocol.Operation
 import Protocol.Package
 
 --------------------------------------------------------------------------------
