@@ -95,7 +95,7 @@ createRespPkg pid name xs flag (EventNumber num) eos =
 parseOp :: MonadPlus m => Pkg -> m (Operation ReadEventsResp)
 parseOp Pkg{..} =
   case pkgCmd of
-    0x04 ->
+    0x05 ->
       case runGet decodeMessage pkgPayload of
         Right r -> do
           let streamName = StreamName $ getField $ readStreamId r
@@ -111,7 +111,7 @@ parseOp Pkg{..} =
 parseResp :: MonadPlus m => Pkg -> m (Response ReadEventsResp)
 parseResp Pkg{..} =
   case pkgCmd of
-    0x05 ->
+    0x06 ->
       case runGet decodeMessage pkgPayload of
         Right r -> do
           let flag    = getField $ readResult r
