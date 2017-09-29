@@ -15,8 +15,6 @@ module Lambda.Node.Manager.Connection (new) where
 import Network.Simple.TCP
 
 --------------------------------------------------------------------------------
-import Data.Aeson (object, (.=))
-import qualified Data.Aeson as Aeson
 import Data.Serialize
 import Lambda.Bus
 import Lambda.Logger
@@ -26,10 +24,10 @@ import Network.Connection
 import Protocol.Package
 import Protocol.Message
 import Protocol.Operation
-import Protocol.Types
 
 --------------------------------------------------------------------------------
-import Lambda.Node.Settings
+import qualified Lambda.Node.Manager.Operation as Operation
+import           Lambda.Node.Settings
 
 --------------------------------------------------------------------------------
 data CheckState
@@ -79,7 +77,8 @@ manageHeartbeat self@ClientSocket{..} = do
 --------------------------------------------------------------------------------
 data ClientSocket =
   ClientSocket
-  { _clientConn      :: !Connection
+  { _clientOpMgr     :: !Operation.Manager
+  , _clientConn      :: !Connection
   , _clientAddr      :: !SockAddr
   , _clientStopwatch :: !Stopwatch
   , _clientQueue     :: !(TBMQueue Pkg)
@@ -105,8 +104,9 @@ app mainBus = appStart (startListening mainBus)
 
 --------------------------------------------------------------------------------
 startListening :: Bus Settings -> React Settings ()
-startListening mainBus =
-  servingFork mainBus . connectionSettings =<< reactSettings
+startListening mainBus = do
+  opMgr <- Operation.new
+  servingFork mainBus opMgr . connectionSettings =<< reactSettings
 
 --------------------------------------------------------------------------------
 new :: Bus Settings -> Lambda Settings ()
@@ -118,6 +118,7 @@ clientApp :: ClientSocket -> Configure Settings ()
 clientApp self = do
   subscribe (onPackageArrived self)
   subscribe (onConnectionClosed self)
+  subscribe (onOperationResp self)
   subscribe (onTick self)
 
   timer Tick 0.2 Undefinitely
@@ -129,9 +130,12 @@ clientApp self = do
        logInfo [i|New connection #{clientId} on #{_clientAddr self}|]
 
 --------------------------------------------------------------------------------
-newClientSocket :: Connection -> SockAddr -> Configure s ClientSocket
-newClientSocket conn addr =
-  ClientSocket conn addr
+newClientSocket :: Operation.Manager
+                -> Connection
+                -> SockAddr
+                -> Configure s ClientSocket
+newClientSocket mgr conn addr =
+  ClientSocket mgr conn addr
     <$> newStopwatch
     <*> (liftIO $ newTBMQueueIO 500)
     <*> newIORef 0
@@ -139,8 +143,11 @@ newClientSocket conn addr =
     <*> newIORef False
 
 --------------------------------------------------------------------------------
-servingFork :: Bus Settings -> ConnectionSettings -> React Settings ()
-servingFork mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run -> do
+servingFork :: Bus Settings
+            -> Operation.Manager
+            -> ConnectionSettings
+            -> React Settings ()
+servingFork mainBus opMgr ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run -> do
   ctx   <- initConnectionContext
 
   serve (Host hostname) (show portNumber) $ \(sock, addr) -> run $ reactLambda $
@@ -150,7 +157,7 @@ servingFork mainBus ConnectionSettings{..} = void $ fork $ liftBaseWith $ \run -
        busProcessedEverything child
   where
     clientConf sock addr =
-      newClientSocket sock addr >>= clientApp
+      newClientSocket opMgr sock addr >>= clientApp
 
     connectionParams =
       ConnectionParams hostname portNumber Nothing Nothing
@@ -161,7 +168,7 @@ processingIncomingPackage ClientSocket{..} =
   handleAny onError $ forever $ do
     prefixBytes <- liftIO $ connectionGetExact _clientConn 4
     case decode prefixBytes of
-      Left _ -> throwString [i|Wrong package framing.]|]
+      Left _ -> throwString [i|Wrong package framing.|]
       Right (PkgPrefix len) -> do
         payload <- liftIO $ connectionGetExact _clientConn (fromIntegral len)
         case decode payload of
@@ -220,26 +227,14 @@ onPackageArrived self@ClientSocket{..} (PackageArrived pkg@Pkg{..}) = do
           handleOperation self op
 
 --------------------------------------------------------------------------------
-handleOperation :: ClientSocket -> Operation a -> React Settings ()
-handleOperation self op@(Operation _ req) =
-  case req of
-    WriteEvents{} ->
-      let resp = WriteEventsResp 1 WriteSuccess
-          pkg  = createRespPkg op resp
-       in enqueuePkg self pkg
-    ReadEvents name _ -> do
-      eid <- freshId
-      let payload = object [ "IsHaskellTheBest" .= True ]
-          evt     = Event { eventType = "lde-mockup"
-                          , eventId   = eid
-                          , eventPayload = Data $ toStrict $ Aeson.encode $ payload
-                          , eventMetadata = Nothing
-                          }
-          saved = SavedEvent 1 evt
-          resp  = ReadEventsResp name [saved] ReadSuccess (-1) True
-          pkg   = createRespPkg op resp
+onOperationResp :: ClientSocket -> Operation.Resp -> React Settings ()
+onOperationResp self (Operation.Resp op resp) =
+  let pkg = createRespPkg op resp
+   in enqueuePkg self pkg
 
-      enqueuePkg self pkg
+--------------------------------------------------------------------------------
+handleOperation :: ClientSocket -> Operation a -> React Settings ()
+handleOperation self op = Operation.push (_clientOpMgr self) op
 
 --------------------------------------------------------------------------------
 onError :: SomeException -> React s ()

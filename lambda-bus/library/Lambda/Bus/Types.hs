@@ -161,6 +161,10 @@ publishOn p sender a = void $ atomically $ publishSTM p msg
     msg = Message a sender Nothing
 
 --------------------------------------------------------------------------------
+sendTo :: (Typeable a, PubSub p) => p settings -> a -> React settings ()
+sendTo bus evt = reactLambda $ publishOn bus (busId bus) evt
+
+--------------------------------------------------------------------------------
 stop :: React s ()
 stop = React $ do
   bus <- asks _reactBus
@@ -181,6 +185,10 @@ reactLambda m = React $ lift m
 --------------------------------------------------------------------------------
 reactSelfId :: React settings UUID
 reactSelfId = React $ asks _reactSelf
+
+--------------------------------------------------------------------------------
+reactBus :: React settings (SomeBus settings)
+reactBus = React $ asks _reactBus
 
 --------------------------------------------------------------------------------
 subscribe :: Typeable a => (a -> React s ()) -> Configure s ()
