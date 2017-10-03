@@ -38,6 +38,7 @@ dependencies:
   - lambda-logger
   - lambda-bus
   - connection
+  - operational
 default-extensions:
   - NoImplicitPrelude
   - LambdaCase
@@ -49,6 +50,8 @@ default-extensions:
   - FlexibleContexts
   - QuasiQuotes
   - RecordWildCards
+  - DeriveGeneric
+  - RankNTypes
 extra-source-files:
 - CHANGELOG.md
 - LICENSE.md
@@ -68,6 +71,8 @@ library:
   - time
   - pretty
   - aeson
+  - machines
+  - resourcet
   source-dirs: library
 license: MIT
 maintainer: Yorick Laupa
