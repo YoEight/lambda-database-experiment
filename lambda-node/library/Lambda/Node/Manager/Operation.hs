@@ -16,15 +16,14 @@ module Lambda.Node.Manager.Operation
     ) where
 
 --------------------------------------------------------------------------------
-import qualified Data.Aeson as Aeson
-import           Data.Aeson (object, (.=))
-import           Lambda.Bus
-import           Lambda.Prelude
-import           Protocol.Operation
-import           Protocol.Types
+import Lambda.Bus
+import Lambda.Prelude
+import Protocol.Operation
+import Protocol.Types
 
 --------------------------------------------------------------------------------
-import Lambda.Node.Settings
+import qualified Lambda.Node.Index as Index
+import           Lambda.Node.Settings
 
 --------------------------------------------------------------------------------
 data Req where
@@ -35,36 +34,38 @@ data Resp where
   Resp :: Operation a -> a -> Resp
 
 --------------------------------------------------------------------------------
-data Manager = Manager { _bus :: Bus Settings }
+data Manager = Manager { _bus   :: Bus Settings
+                       , _index :: Index.Indexer
+                       }
 
 --------------------------------------------------------------------------------
 new :: React Settings Manager
 new = reactLambda $ do
   bus <- newBus
-  configure bus app
-  pure $ Manager bus
+  ind <- Index.newIndexer
+
+  let self = Manager bus ind
+
+  configure bus $
+    do subscribe (onReq self)
+
+  pure self
 
 --------------------------------------------------------------------------------
-app :: Configure Settings ()
-app = subscribe onReq
-
---------------------------------------------------------------------------------
-onReq :: Req -> React Settings ()
-onReq (Req sender op@(Operation _ req)) =
+onReq :: Manager -> Req -> React Settings ()
+onReq self (Req sender op@(Operation _ req)) =
   case req of
-    WriteEvents{} ->
+    WriteEvents name _ evts -> do
+      reactLambda $ Index.indexEvents (_index self) name (toList evts)
+
       let resp = WriteEventsResp 1 WriteSuccess
-       in sendTo sender (Resp op resp)
+
+      sendTo sender (Resp op resp)
     ReadEvents name _ -> do
-      eid <- freshId
-      let payload = object [ "IsHaskellTheBest" .= True ]
-          evt     = Event { eventType = "lde-mockup"
-                          , eventId   = eid
-                          , eventPayload = Data $ toStrict $ Aeson.encode $ payload
-                          , eventMetadata = Nothing
-                          }
-          saved = SavedEvent 1 evt
-          resp  = ReadEventsResp name [saved] ReadSuccess (-1) True
+      res <- reactLambda $ Index.readStreamEvents (_index self) name
+
+      let evts = foldMap toList res
+          resp = ReadEventsResp name evts ReadSuccess (-1) True
 
       sendTo sender (Resp op resp)
 
