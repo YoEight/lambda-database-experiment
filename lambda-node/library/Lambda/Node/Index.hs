@@ -13,6 +13,7 @@ module Lambda.Node.Index
   , newIndexer
   , indexEvents
   , readStreamEvents
+  , nextStreamEventNum
   ) where
 
 --------------------------------------------------------------------------------
@@ -87,18 +88,19 @@ newIndexer = Indexer <$> newIORef mempty
 indexEvents :: Indexer
             -> StreamName
             -> [Event]
-            -> Lambda Settings ()
+            -> Lambda Settings EventNumber
 indexEvents self name xs = do
   mnum <- lookupStreamNextNum name <$> readIORef (_map self)
 
   let num  = fromMaybe 0 mnum
-      next = num + len + 1
+      next = num + len
 
   poss <- Journal.runInMemory (_journal self) (foldM persist mempty $ indexed num)
+
   atomicModifyIORef (_map self) $ \m ->
     let m' = insertStreamNextNum name next $
              insertStreamEventPos name poss m
-     in (m', ())
+     in (m', next)
   where
     len = fromIntegral $ length xs
 
@@ -108,19 +110,20 @@ indexEvents self name xs = do
       fmap (acc `snoc`) (Journal.marshal (SavedEvent num evt))
 
 --------------------------------------------------------------------------------
+nextStreamEventNum :: Indexer -> StreamName -> Lambda Settings EventNumber
+nextStreamEventNum self name = do
+  mnum <- lookupStreamNextNum name <$> readIORef (_map self)
+  return $ fromMaybe 0 mnum
+
+--------------------------------------------------------------------------------
 readStreamEvents :: Indexer
                  -> StreamName
                  -> Lambda Settings (Maybe [SavedEvent])
 readStreamEvents self name = do
   m  <- readIORef (_map self)
 
-  let _F val =
-        let StreamEvents poss = val
-         in poss
-
-      mkey = lookupStreamEventPos name m
-
-      action = traverse (fmap toList . traverse readStream) mkey
+  let mpos   = lookupStreamEventPos name m
+      action = traverse (fmap toList . traverse readStream) mpos
 
   Journal.runInMemory (_journal self) action
   where

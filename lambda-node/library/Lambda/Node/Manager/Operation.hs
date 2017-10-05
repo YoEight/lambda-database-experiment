@@ -56,9 +56,9 @@ onReq :: Manager -> Req -> React Settings ()
 onReq self (Req sender op@(Operation _ req)) =
   case req of
     WriteEvents name _ evts -> do
-      reactLambda $ Index.indexEvents (_index self) name (toList evts)
+      num <- reactLambda $ Index.indexEvents (_index self) name (toList evts)
 
-      let resp = WriteEventsResp 1 WriteSuccess
+      let resp = WriteEventsResp num WriteSuccess
 
       sendTo sender (Resp op resp)
     ReadEvents name _ -> do

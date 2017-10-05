@@ -57,6 +57,7 @@ unmarshal = Operational.singleton Unmarshal
 --------------------------------------------------------------------------------
 data InMemory =
   InMemory { _memCurPos :: IORef Integer
+           , _memEOF    :: IORef Integer
            , _memLogs   :: IORef (HashMap Integer ByteString)
            }
 
@@ -64,6 +65,7 @@ data InMemory =
 newInMemory :: Lambda Settings InMemory
 newInMemory =
   InMemory <$> newIORef 0
+           <*> newIORef 0
            <*> newIORef mempty
 
 --------------------------------------------------------------------------------
@@ -81,11 +83,15 @@ runInMemory self sm = Operational.interpretWithMonad go sm
       readIORef (_memCurPos self)
 
     go (Marshal a) = do
-      pos <- readIORef (_memCurPos self)
-      let bytes = encode a
-      modifyIORef' (_memLogs self) (insertMap pos bytes)
-      writeIORef (_memCurPos self) (pos + (fromIntegral $ length bytes))
-      pure pos
+      eof <- readIORef (_memEOF self)
+
+      let bytes   = encode a
+          nextPos = eof + (fromIntegral $ length bytes)
+
+      modifyIORef' (_memLogs self) (insertMap eof bytes)
+      writeIORef (_memCurPos self) nextPos
+      writeIORef (_memEOF self) nextPos
+      pure eof
 
     go Unmarshal = do
       pos <- readIORef (_memCurPos self)
