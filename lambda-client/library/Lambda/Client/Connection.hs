@@ -141,10 +141,6 @@ app builder = do
   appStart $ startConnecting self
 
 --------------------------------------------------------------------------------
-onStart :: Internal -> Start -> React Settings ()
-onStart self _ = startConnecting self
-
---------------------------------------------------------------------------------
 onEstablished :: Internal -> ConnectionEstablished -> React Settings ()
 onEstablished self (ConnectionEstablished conn) = established self conn
 
@@ -164,10 +160,14 @@ onTick :: Internal -> Tick -> React Settings ()
 onTick self@Internal{..} _ = readIORef _stageRef >>= \case
   Connecting att state
     | onGoingConnection state ->
-      do let retries = attemptCount att + 1
-         switchToReconnecting self retries
-         logDebug [i|Checking reconnection... (attempt #{retries}).|]
-         connecting self
+      do elapsed <- stopwatchElapsed _stopwatch
+         timeout <- connectionTimeout <$> reactSettings
+
+         unless (elapsed - attemptLastTime att < timeout) $
+           do let retries = attemptCount att + 1
+              switchToReconnecting self retries
+              logDebug [i|Checking reconnection... (attempt #{retries}).|]
+              connecting self
     | otherwise -> pure ()
 
   Connected{} -> Operation.tick _ops

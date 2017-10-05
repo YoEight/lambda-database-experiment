@@ -18,13 +18,15 @@ import Lambda.Prelude
 data Settings =
   Settings
   { connectionType :: !ConnectionType
-
+  , connectionTimeout :: !NominalDiffTime
   }
 
 --------------------------------------------------------------------------------
 defaultSettings :: Settings
 defaultSettings =
-  Settings { connectionType = Static "localhost" 1113 }
+  Settings { connectionType = Static "localhost" 1113
+           , connectionTimeout = 3 -- secs.
+           }
 
 --------------------------------------------------------------------------------
 data ConnectionType = Static String Int

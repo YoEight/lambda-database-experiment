@@ -39,7 +39,7 @@ main = do
   print wres
 
   rres <- readEvents client "test-stream" (startFrom 1) >>= wait
-  print rres
+  traverse_ print $ events rres
 
   awaitShutdown client
 
