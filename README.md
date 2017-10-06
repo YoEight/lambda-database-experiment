@@ -6,10 +6,10 @@ it happens someday.
 This project is comprised of:
 * **lambda-bus**: In-memory message bus. It's used in **lambda-node** and **lambda-client** and helps to implement a **S**taged **E**vent-**D**riven **A**rchitecture.
 * **lambda-client**: TCP client of **lambda-node**.
-* **lambda-logger**: Logging infrastructure use **lambda-bus**, **lambda-client**, **lambda-node** and **lambda-prelude**.
+* **lambda-logger**: Logging infrastructure used by **lambda-bus**, **lambda-client**, **lambda-node** and **lambda-prelude**.
 * **lambda-node**: Eventstore database server.
 * **lambda-prelude**: A prelude specific to **LDE** project.
-* **lambda-protocol**: Gathers all the type declaration common to **lambda-client** and **lambda-node**.
+* **lambda-protocol**: Gathers all the type declarations common to **lambda-client** and **lambda-node**.
 
 ## How to build this project ?
 
