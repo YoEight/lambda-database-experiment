@@ -10,6 +10,12 @@
 -- Stability :  experimental
 -- Portability: non-portable
 --
+-- In-memory message bus implementation. This implementation also provides
+-- tree-like organisation. A bus could have children and also one parent.
+--
+-- When a bus receive a message but has no registered callbacks for it, it
+-- propagates that message to its parent. That procedure stops as soon as
+-- a callbacks can support the message or there is parent to reach out.
 --------------------------------------------------------------------------------
 module Lambda.Bus.Impl where
 
@@ -27,16 +33,24 @@ import Lambda.Bus.Types
 type Callbacks settings = HashMap Type (Seq (Callback settings))
 
 --------------------------------------------------------------------------------
+-- | An in-memory message bus.
 data Bus settings =
-  Bus { _busEventHandlers  :: TVar (Callbacks settings)
-      , _busQueue          :: TBMQueue Message
-      , _busChildren       :: TVar (HashMap UUID (Bus settings))
-      , _busParent         :: TVar (Maybe (Bus settings))
-      , _workerAsync       :: Async ()
-      , _busId             :: UUID
+  Bus { _busEventHandlers :: TVar (Callbacks settings)
+        -- ^ All registered callbacks.
+      , _busQueue :: TBMQueue Message
+        -- ^ Actual message queue.
+      , _busChildren :: TVar (HashMap UUID (Bus settings))
+        -- ^ Bus children.
+      , _busParent :: TVar (Maybe (Bus settings))
+        -- ^ Bus parent.
+      , _workerAsync :: Async ()
+        -- ^ Worker thread handle.
+      , _busId :: UUID
+        -- ^ Bus id.
       }
 
 --------------------------------------------------------------------------------
+-- | Stops 'Bus'.
 _busStop :: Bus settings -> Lambda settings ()
 _busStop Bus{..} = atomically $ do
   closeTBMQueue _busQueue
@@ -45,14 +59,17 @@ _busStop Bus{..} = atomically $ do
     busDeleteChildSTM p _busId
 
 --------------------------------------------------------------------------------
+-- | Set a 'Bus' parent.
 busParent :: Bus settings -> Bus settings -> Lambda settings ()
 busParent Bus{..} parent = atomically $ writeTVar _busParent (Just parent)
 
 --------------------------------------------------------------------------------
+-- | Waits until a 'Bus' has stopped and carried out all its messages.
 busProcessedEverything :: MonadIO m => Bus settings -> m ()
 busProcessedEverything Bus{..} = waitAsync _workerAsync
 
 --------------------------------------------------------------------------------
+-- | Creates a new child bus.
 busNewChild :: Bus s -> Lambda s (Bus s)
 busNewChild self = do
   child <- newBus
@@ -60,16 +77,21 @@ busNewChild self = do
   return child
 
 --------------------------------------------------------------------------------
-busInsertChild :: Bus settings -> Bus settings -> Lambda settings ()
+-- | Insert a bus as a child.
+busInsertChild :: Bus settings -- Parent.
+               -> Bus settings -- Child.
+               -> Lambda settings ()
 busInsertChild self child = do
   atomically $ modifyTVar' (_busChildren self) (insertMap (_busId child) child)
   busParent child self
 
 --------------------------------------------------------------------------------
+-- | Remove a bus as child given its id.
 busDeleteChildSTM :: Bus settings -> UUID -> STM ()
 busDeleteChildSTM Bus{..} childId = modifyTVar' _busChildren (deleteMap childId)
 
 --------------------------------------------------------------------------------
+-- | Creates a new 'Bus'.
 newBus :: Lambda settings (Bus settings)
 newBus = do
   bus <- mfix $ \self ->
@@ -86,10 +108,12 @@ newBus = do
     mailboxLimit = 500
 
 --------------------------------------------------------------------------------
+-- | Configures a 'Bus' with the help of a 'Configure' computation.
 configure :: Bus settings -> Configure settings () -> Lambda settings ()
 configure self conf = runConfigure conf self
 
 --------------------------------------------------------------------------------
+-- | 'Bus' worker thread.
 worker :: Bus settings -> Lambda settings ()
 worker self@Bus{..} = loop
   where
@@ -127,6 +151,11 @@ instance PubSub Bus where
   busStop = _busStop
 
 --------------------------------------------------------------------------------
+-- | Publishes a message. First it determines if the message is routed. Meaning
+--   if the message has proper target known by its children. If yes, then the
+--   message is dispatched to the right child. Otherwise, it tries to dispatch
+--   the message to the right handler if it exists. This implementation also
+--   propagating the message to handler that support 'Message' if those exists.
 publishing :: Bus settings
            -> Callbacks settings
            -> Message
@@ -160,6 +189,7 @@ publishing self@Bus{..} callbacks msg@(Message a _ destM) =
             Nothing -> return False
 
 --------------------------------------------------------------------------------
+-- | Runs every callbacks in order by submitting the message to them.
 propagate :: Typeable a => Bus s -> a -> Seq (Callback s) -> Lambda s ()
 propagate self@Bus{..} a = traverse_ $ \(Callback _ k) -> do
   let Just b = cast a
