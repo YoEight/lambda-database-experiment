@@ -15,13 +15,18 @@ module Lambda.Client.Settings where
 import Lambda.Prelude
 
 --------------------------------------------------------------------------------
+-- | Client settings.
 data Settings =
   Settings
   { connectionType :: !ConnectionType
+    -- ^ Connection type.
   , connectionTimeout :: !NominalDiffTime
+    -- ^ How long a connection much take before being considered as timeout.
   }
 
 --------------------------------------------------------------------------------
+-- * 'connectionType' = 'Static' /"localhost"/ /1113/.
+-- * 'connectionTimeout' = /3/ seconds.
 defaultSettings :: Settings
 defaultSettings =
   Settings { connectionType = Static "localhost" 1113
@@ -29,6 +34,7 @@ defaultSettings =
            }
 
 --------------------------------------------------------------------------------
+-- | Types of connection supported.
 data ConnectionType = Static String Int
 
 --------------------------------------------------------------------------------

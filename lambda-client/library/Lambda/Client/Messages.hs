@@ -15,6 +15,7 @@ import Lambda.Prelude
 import Protocol.Operation
 
 --------------------------------------------------------------------------------
+-- | New request coming from the user.
 data NewRequest where
   NewRequest :: Request a -> (Either String a -> IO ()) -> NewRequest
 

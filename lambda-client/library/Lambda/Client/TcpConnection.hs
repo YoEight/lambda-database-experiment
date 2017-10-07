@@ -1,6 +1,16 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 --------------------------------------------------------------------------------
+-- |
+-- Module    :  Lambda.Client.TcpConnection
+-- Copyright :  (C) 2017 Yorick Laupa
+-- License   :  (see the file LICENSE)
+-- Maintainer:  Yorick Laupa <yo.eight@gmail.com>
+-- Stability :  experimental
+-- Portability: non-portable
+--
+-- TCP connection type declarations.
+--------------------------------------------------------------------------------
 module Lambda.Client.TcpConnection
   ( ConnectionBuilder(..)
   , TcpConnection(..)
@@ -28,10 +38,13 @@ import Lambda.Client.EndPoint
 import Lambda.Client.Settings
 
 --------------------------------------------------------------------------------
+-- | Utility type that knows how to create a 'TcpConnection'.
 newtype ConnectionBuilder =
   ConnectionBuilder { connect :: EndPoint -> React Settings TcpConnection }
 
 --------------------------------------------------------------------------------
+-- | Represents all kind of outcome that can occur when we try to read from a
+--   TCP socket.
 data RecvOutcome
   = ResetByPeer
   | Recv Pkg
@@ -42,10 +55,13 @@ data RecvOutcome
 type ConnectionId = UUID
 
 --------------------------------------------------------------------------------
+-- | Stateful computation that knows when a 'TcpConnection' is available.
 newtype ConnectionRef =
   ConnectionRef { maybeConnection :: React Settings (Maybe TcpConnection) }
 
 --------------------------------------------------------------------------------
+-- | Partial way to obtain a 'TcpConnection'. Use it when you really sure a
+--   'TcpConnection' is available at that time.
 getConnection :: ConnectionRef -> React Settings TcpConnection
 getConnection ref =
   maybeConnection ref >>= \case
@@ -55,11 +71,16 @@ getConnection ref =
       throwString "No current connection (impossible situation)"
 
 --------------------------------------------------------------------------------
+-- | Represents a tcp connection.
 data TcpConnection =
-  TcpConnection { connectionId       :: ConnectionId
+  TcpConnection { connectionId :: ConnectionId
+                  -- ^ Unique connection id.
                 , connectionEndPoint :: EndPoint
-                , enqueuePkg         :: Pkg -> React Settings ()
-                , dispose            :: React Settings ()
+                  -- ^ Endpoint supported by this connection.
+                , enqueuePkg :: Pkg -> React Settings ()
+                  -- ^ Pushes a 'Pkg' to be sent.
+                , dispose :: React Settings ()
+                  -- ^ Called when a conection is disposed.
                 }
 
 --------------------------------------------------------------------------------
@@ -72,28 +93,35 @@ instance Eq TcpConnection where
   a == b = connectionId a == connectionId b
 
 --------------------------------------------------------------------------------
+-- | 'TcpConnection' internal state. So far, only closeable queue.
 newtype ConnectionState =
   ConnectionState { _sendQueue :: TBMQueue Pkg }
 
 --------------------------------------------------------------------------------
+-- | Event sent when 'Pkg' has been sent by the server.
 data PkgArrived = PkgArrived TcpConnection Pkg deriving Typeable
 
 --------------------------------------------------------------------------------
+-- | Event sent when a 'TcpConnection' has errored.
 data ConnectionError =
   ConnectionError TcpConnection SomeException deriving Typeable
 
 --------------------------------------------------------------------------------
+-- | Smart constructor from 'ConnectionError' event.
 connectionError :: Exception e => TcpConnection -> e -> ConnectionError
 connectionError c = ConnectionError c . toException
 
 --------------------------------------------------------------------------------
+-- | Event sent when a connection has been closed.
 data ConnectionClosed = ConnectionClosed TcpConnection SomeException
   deriving Typeable
 
 --------------------------------------------------------------------------------
+-- | Event sent when a 'TcpConnection' has been established.
 data ConnectionEstablished = ConnectionEstablished TcpConnection
 
 --------------------------------------------------------------------------------
+-- | Event sent when a connection has been stopped abruptly.
 newtype ConnectionResetByPeer = ConnectionResetByPeer SomeException
 
 --------------------------------------------------------------------------------
@@ -105,9 +133,13 @@ instance Show ConnectionResetByPeer where
 instance Exception ConnectionResetByPeer
 
 --------------------------------------------------------------------------------
+-- | Error raised when the communication protocol expectation hasn't been meet.
 data ProtocolError
   = WrongFramingError !String
+    -- ^ See https://blog.stephencleary.com/2009/04/message-framing.html
+    --   for more information.
   | PkgParsingError !String
+    -- Wrong 'Pkg' format.
   deriving Typeable
 
 --------------------------------------------------------------------------------
@@ -119,6 +151,7 @@ instance Show ProtocolError where
 instance Exception ProtocolError
 
 --------------------------------------------------------------------------------
+-- | Creates asynchronous TCP connection.
 connectionBuilder :: Lambda Settings ConnectionBuilder
 connectionBuilder = do
   ctx <- liftIO $ Network.initConnectionContext
@@ -128,7 +161,7 @@ connectionBuilder = do
 
     mfix $ \self -> do
       tcpConnAsync <- async $
-        tryAny (createConnection ctx ept) >>= \case
+        tryAny (openConnection ctx ept) >>= \case
           Left e -> do
             publish (ConnectionClosed self e)
             throw e
@@ -149,24 +182,28 @@ connectionBuilder = do
                            }
 
 --------------------------------------------------------------------------------
+-- | Creates a 'TcpConnection' internal state.
 createState :: React Settings ConnectionState
 createState = ConnectionState <$> liftIO (newTBMQueueIO 500)
 
 --------------------------------------------------------------------------------
+-- | Closes a 'TcpConnection'.
 closeState :: ConnectionState -> React Settings ()
 closeState ConnectionState{..} = atomically $ closeTBMQueue _sendQueue
 
 --------------------------------------------------------------------------------
-createConnection :: Network.ConnectionContext
+-- | Opens a TCP connection.
+openConnection :: Network.ConnectionContext
                  -> EndPoint
                  -> React Settings Network.Connection
-createConnection ctx ept = liftIO $ Network.connectTo ctx params
+openConnection ctx ept = liftIO $ Network.connectTo ctx params
   where
     host   = endPointIp ept
     port   = fromIntegral $ endPointPort ept
     params = Network.ConnectionParams host port Nothing Nothing
 
 --------------------------------------------------------------------------------
+-- | Closes and disposes a tcp connection.
 disposeConnection :: Async Network.Connection -> React Settings ()
 disposeConnection as = traverse_ tryDisposing =<< pollAsync as
   where
@@ -174,6 +211,7 @@ disposeConnection as = traverse_ tryDisposing =<< pollAsync as
     disposing    = liftIO . Network.connectionClose
 
 --------------------------------------------------------------------------------
+-- | Parses a 'Pkg' from a TCP connection.
 receivePkg :: TcpConnection -> Network.Connection -> React Settings Pkg
 receivePkg self conn =
   tryAny (liftIO $ Network.connectionGetExact conn 4) >>= \case
@@ -201,6 +239,7 @@ receivePkg self conn =
                 Right pkg -> return pkg
 
 --------------------------------------------------------------------------------
+-- | Read thread worker.
 receiving :: ConnectionState
           -> TcpConnection
           -> Async Network.Connection
@@ -212,12 +251,14 @@ receiving ConnectionState{..} self tcpConnAsync =
       publish . PkgArrived self =<< receivePkg self conn
 
 --------------------------------------------------------------------------------
+-- | Adds a 'Pkg' to the connection queue.
 enqueue :: ConnectionState -> Pkg -> React Settings ()
 enqueue ConnectionState{..} pkg@Pkg{..} = do
   logDebug [i|Pkg enqueued: #{pkg}|]
   atomically $ writeTBMQueue _sendQueue pkg
 
 --------------------------------------------------------------------------------
+-- | Write thread worker.
 sending :: ConnectionState
         -> TcpConnection
         -> Async Network.Connection

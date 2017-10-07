@@ -7,6 +7,8 @@
 -- Stability :  experimental
 -- Portability: non-portable
 --
+-- Operation manager. It prepares requests from the user and handle responses
+-- from the database server. It also manages operations timeout.
 --------------------------------------------------------------------------------
 module Lambda.Client.Operation where
 
@@ -27,39 +29,51 @@ import Lambda.Client.Settings
 import Lambda.Client.TcpConnection
 
 --------------------------------------------------------------------------------
+-- | Meta-information related to operation transaction.
 data Meta =
-  Meta { attempts    :: !Natural
+  Meta { attempts :: !Natural
+         -- ^ Number of time this operation has been tried.
        , correlation :: !PkgId
-       , started     :: !NominalDiffTime
+         -- ^ Id of the transaction.
+       , started :: !NominalDiffTime
+         -- ^ Since when this operation has been emitted.
        }
 
 --------------------------------------------------------------------------------
+-- | Creates a new 'Meta'.
 newMeta :: Stopwatch -> React Settings Meta
 newMeta s = Meta 0 <$> freshPkgId
                    <*> stopwatchElapsed s
 
 --------------------------------------------------------------------------------
+-- | Represents an ongoing transaction.
 data Pending where
   Pending :: Meta
           -> Request a
-          -> (Either String a -> IO ())
+          -> (Either String a -> IO ()) -- The callback to execute once we get a response.
           -> Pending
 
 --------------------------------------------------------------------------------
+-- | Represents a request put on hold because at the moment it was submitted,
+--   an open 'TcpConnection' wasn't available. Those requests will be retried
+--   once the connection manager calls 'tick'.
 data Awaiting where
   Awaiting :: Request a
            -> (Either String a -> IO ())
            -> Awaiting
 
 --------------------------------------------------------------------------------
+-- | Operation manager reference.
 data Manager =
-  Manager { connRef   :: ConnectionRef
+  Manager { connRef :: ConnectionRef
+            -- ^ Allows us to know if a 'TcpConnection' is available.
           , pendings  :: IORef (HashMap PkgId Pending)
           , awaitings :: IORef (Seq Awaiting)
           , stopwatch :: Stopwatch
           }
 
 --------------------------------------------------------------------------------
+-- | Creates an operation manager instance.
 new :: ConnectionRef -> Configure Settings Manager
 new ref =
   Manager ref <$> newIORef mempty
@@ -67,6 +81,7 @@ new ref =
               <*> newStopwatch
 
 --------------------------------------------------------------------------------
+-- | Submits a new operation request.
 submit :: Manager -> NewRequest -> React Settings ()
 submit Manager{..} (NewRequest req callback) =
   maybeConnection connRef >>= \case
@@ -84,6 +99,7 @@ submit Manager{..} (NewRequest req callback) =
        in modifyIORef' awaitings (`snoc` awaiting)
 
 --------------------------------------------------------------------------------
+-- | Updates operation manager state by submitting a incoming 'Pkg'.
 arrived :: Manager -> Pkg -> React Settings ()
 arrived Manager{..} pkg@Pkg{..} = do
   reg <- readIORef pendings
@@ -99,6 +115,8 @@ arrived Manager{..} pkg@Pkg{..} = do
          writeIORef pendings (deleteMap pkgId reg)
 
 --------------------------------------------------------------------------------
+-- | Performs operation manager internal bookkeepping like keeping track of
+--   timeout operations or retrying awaited requests.
 -- TODO - Implement pending request checking so we can detect which operation
 --        has timeout.
 tick :: Manager -> React Settings ()

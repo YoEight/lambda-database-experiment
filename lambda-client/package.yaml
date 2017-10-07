@@ -33,7 +33,6 @@ extra-source-files:
 - LICENSE.md
 - package.yaml
 - README.md
-- stack.yaml
 ghc-options: -Wall
 github: YoEight/lambda-client
 library:
